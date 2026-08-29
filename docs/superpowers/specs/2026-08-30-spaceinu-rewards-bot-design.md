@@ -79,7 +79,7 @@ bought. babyrobbie's buy leg, its most failure-prone machinery, is deleted.
 ```
 1. sweep            push pending fees into the escrow   (best-effort, never fatal)
 2. claimToken(SPCX) withdraw the escrow balance         -> SPCX in the wallet
-3. split            REWARD_BUY_PCT to holders, remainder is the dev cut
+3. split            REWARD_PCT to holders, remainder is the dev cut
 4. airdrop          SPCX pro-rata to eligible SPACEINU holders
                     (the dev cut needs no transaction — it is already in the wallet)
 ```
