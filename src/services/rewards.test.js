@@ -1,49 +1,42 @@
 'use strict';
 
+process.env.DRY_RUN = 'true';
+
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseDistributor, EMPTY } = require('./rewards');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { EMPTY } = require('./rewards');
 
-// Shape returned by GET {ponsApi}/api/pons-v2-market/{token}/distributor
-const payload = (over = {}) => ({
-  state: 'active',
-  distributor: '0x5AA38e88d15677781b00821fdBc2Cdbb3409Aeb2',
-  unallocatedQuote: '0',
-  unallocatedCoin: '0',
-  epochCount: 0,
-  distributedQuote: '0',
-  distributedCoin: '0',
-  latestEpoch: null,
-  ...over,
+test('pre-launch, the rewarded total is null rather than zero', () => {
+  // The site hides a null tile but renders a 0 as a real "nothing paid" claim.
+  assert.strictEqual(EMPTY.totalRewarded, null);
 });
 
-test('scales the distributedQuote wei string by the given decimals', () => {
-  const out = parseDistributor(payload({ distributedQuote: '5000000000000000000' }), 18);
-  assert.strictEqual(out.totalRewarded, 5);
-});
+test('the total sums real payouts and ignores simulated ones', async () => {
+  const mongod = await MongoMemoryServer.create();
+  process.env.MONGODB_URI = mongod.getUri();
+  process.env.MONGODB_DB = 'spaceinu_rewards_test';
+  process.env.TOKEN_ADDRESS = '0x50d0d0da00ffd195d2d1d2448617ad039855ad2b';
+  for (const m of ['./../config', '../db/index', '../db/repository', './rewards']) {
+    delete require.cache[require.resolve(m)];
+  }
+  const config = require('./../config');
+  const db = require('../db');
+  const repo = require('../db/repository');
+  const { fetchRewards } = require('./rewards');
 
-test('honors non-18 decimals', () => {
-  const out = parseDistributor(payload({ distributedQuote: '826700' }), 0);
-  assert.strictEqual(out.totalRewarded, 826_700);
-});
+  await db.connect();
+  const cycleId = await repo.createCycle({ dryRun: false });
+  const common = { cycleId, rewardToken: config.rewardTokenAddress, amountRaw: '1' };
 
-test('a real zero paid out is 0, not null', () => {
-  const out = parseDistributor(payload({ distributedQuote: '0' }), 18);
-  assert.strictEqual(out.totalRewarded, 0);
-});
+  await repo.addAirdrop({ ...common, recipient: '0xa', amountUi: 2.5, signature: `0x${'a'.repeat(64)}`, status: 'ok' });
+  await repo.addAirdrop({ ...common, recipient: '0xb', amountUi: 1.5, signature: `0x${'b'.repeat(64)}`, status: 'ok' });
+  await repo.addAirdrop({ ...common, recipient: '0xc', amountUi: 99, signature: 'airdrop_ka9f2x', status: 'ok' });
+  await repo.addAirdrop({ ...common, recipient: '0xd', amountUi: 50, signature: `0x${'d'.repeat(64)}`, status: 'failed' });
 
-test('passes the distributor address through, lowercased', () => {
-  const out = parseDistributor(payload(), 18);
-  assert.strictEqual(out.distributor, '0x5aa38e88d15677781b00821fdbc2cdbb3409aeb2');
-});
+  const out = await fetchRewards();
+  assert.strictEqual(out.totalRewarded, 4, 'only the two real, successful payouts count');
 
-test('a token with no distributor yields nulls, never zeros', () => {
-  assert.deepStrictEqual(parseDistributor({ state: 'none' }, 18), EMPTY);
-  assert.deepStrictEqual(parseDistributor(payload({ distributedQuote: null, distributor: null }), 18), EMPTY);
-});
-
-test('a malformed response throws so the cache keeps the last good value', () => {
-  assert.throws(() => parseDistributor(null, 18), /malformed/);
-  assert.throws(() => parseDistributor('nope', 18), /malformed/);
-  assert.throws(() => parseDistributor(payload({ distributedQuote: 'not-a-number' }), 18), /malformed/);
+  await db.close();
+  await mongod.stop();
 });

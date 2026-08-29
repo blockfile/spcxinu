@@ -19,13 +19,14 @@ test('clamps limit into 1..MAX and ignores junk', () => {
 });
 
 test('passes a well-formed cursor through untouched', () => {
-  assert.strictEqual(parseQuery({ cursor: '47607407-27' }).cursor, '47607407-27');
+  assert.strictEqual(parseQuery({ cursor: '4760' }).cursor, '4760');
   assert.strictEqual(parseQuery({ cursor: '' }).cursor, null);
 });
 
 test('rejects a malformed cursor with a 400', () => {
   assert.throws(() => parseQuery({ cursor: 'nope' }), (err) => err.status === 400);
-  assert.throws(() => parseQuery({ cursor: ['1-2'] }), (err) => err.status === 400);
+  assert.throws(() => parseQuery({ cursor: ['12'] }), (err) => err.status === 400);
+  assert.throws(() => parseQuery({ cursor: '47607407-27' }), (err) => err.status === 400); // the old Blockscout form
 });
 
 test('presents the page as the site\'s `transactions` (ISO timestamp) and as `rows` (epoch ms)', () => {

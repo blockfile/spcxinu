@@ -1,10 +1,10 @@
 'use strict';
 
-// GET /rewards?cursor=<block>-<logIndex>&limit=<1..50> — the live payout feed.
+// GET /rewards?cursor=<rowId>&limit=<1..50> — the live payout feed.
 //
 // The site's REWARDS window (RewardsScene.jsx) polls this every 15s with no
 // query string and renders `transactions` as one scrollable ledger, so the
-// default page is a full Blockscout page (50). Shape, per its mockData.js:
+// default page is the full 50. Shape, per its mockData.js:
 //
 //   { "transactions": [{ "id", "wallet", "amount", "txHash", "timestamp" }], ... }
 //
