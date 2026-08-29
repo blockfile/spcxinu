@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 
 const config = require('./src/config');
+const db = require('./src/db');
 const { router: statsRouter } = require('./src/routes/stats');
 const { router: rewardsRouter } = require('./src/routes/rewards');
 const { router: tokenRouter } = require('./src/routes/token');
@@ -70,7 +71,14 @@ app.use((err, req, res, next) => {
 
 let server;
 
-if (require.main === module) {
+// The rewards total and the payout feed come from the bot's ledger, so this
+// process needs MongoDB — read-only. It deliberately does NOT load the wallet
+// key or start the scheduler: that is bot.js's job, and keeping them apart
+// means a compromise of this internet-facing service reaches no signing key.
+async function main() {
+  await db.connect();
+  console.log(`[spaceinu] MongoDB connected (${config.mongoDb})`);
+
   server = app.listen(config.port, () => {
     console.log(`[spaceinu] listening on http://localhost:${config.port}`);
     console.log(
@@ -78,14 +86,22 @@ if (require.main === module) {
     );
     console.log(`[spaceinu] cors=${config.corsOrigins.join(', ')}`);
   });
+}
 
-  const shutdown = (signal) => {
+if (require.main === module) {
+  const shutdown = async (signal) => {
     console.log(`\n[spaceinu] ${signal} received, shutting down`);
-    if (server) server.close(() => process.exit(0));
-    else process.exit(0);
+    if (server) server.close();
+    await db.close();
+    process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  main().catch((err) => {
+    console.error('[spaceinu] failed to start:', err);
+    process.exit(1);
+  });
 }
 
 module.exports = app;

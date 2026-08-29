@@ -106,10 +106,10 @@ const config = {
   rewardsTtlMs: num(process.env.REWARDS_TTL_MS, 60_000),
 
   // ── Rewards feed (GET /rewards) ────────────────────────────────────────────
-  // Every payout is an SPCX transfer OUT of the fee distributor, listed by
-  // Blockscout (see src/services/rewardsfeed.js). The distributor address is
-  // normally resolved from the Pons API; this pins it instead.
-  distributorAddress: lowerOrNull(process.env.DISTRIBUTOR_ADDRESS),
+  // Every payout is one this bot made, read straight from its own ledger (see
+  // src/services/rewardsfeed.js). There is no DISTRIBUTOR_ADDRESS here on
+  // purpose: pons's fee distributor and this bot are mutually exclusive, and
+  // keeping the key around would suggest they can coexist.
   feedTtlMs: num(process.env.FEED_TTL_MS, 30_000),
 
   // Comma-separated allowlist of browser origins. Non-browser requests (no
