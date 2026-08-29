@@ -112,7 +112,11 @@ async function runRewardLeg(cycleId, { launch, quoteAmount }) {
   // rather than assuming 18, or the eligibility threshold is wrong by orders of
   // magnitude on any token that is not 18-decimal — in whichever direction
   // makes the airdrop include everybody or nobody.
-  const tokenDecimals = await getDecimals(launch.token);
+  //
+  // DRY_RUN must simulate EVERY chain call, so it takes the configured value:
+  // reading decimals() from the node is the one call that would otherwise make
+  // a dry run need a live RPC, and it would die here having already "claimed".
+  const tokenDecimals = config.dryRun ? config.tokenDecimals : await getDecimals(launch.token);
   const minHoldRaw = (BigInt(Math.trunc(config.minHold)) * 10n ** BigInt(tokenDecimals)).toString();
 
   const exclude = await buildExcludeSet(launch);
