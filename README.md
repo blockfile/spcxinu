@@ -12,7 +12,7 @@ SPACEINU trades  →  creator fees accrue on-chain, denominated in SPCX
       ↓  sweep              push pending fees into the pons fee escrow
       ↓  claimToken(SPCX)   withdraw the escrow → the bot's wallet
       ├─ 80% → airdrop SPCX pro-rata to SPACEINU holders
-      └─ 20% → dev cut (already SPCX in the wallet — no transaction)
+      └─ 20% → dev cut → forwarded to DEV_PAYOUT_ADDRESS (a cold wallet)
 ```
 
 **Nothing is ever bought.** The reward asset arrives as the fee asset, so there
@@ -72,6 +72,35 @@ distributor contract and leaves the bot with nothing to claim.
 Use the toggle if you want 100% to holders on pons's schedule. Use this bot if
 you want a dev cut, a `MIN_HOLD` threshold, anti-sybil cluster caps, exclusions,
 and your own trigger.
+
+## Two wallets, and why
+
+The bot has to *sign* transactions, so its private key sits in `.env` on the
+server. That is unavoidable. What is avoidable is that wallet also being where
+your earnings pile up.
+
+| | Key on the server? | Holds |
+| --- | --- | --- |
+| **Bot wallet** (`WALLET_PRIVATE_KEY`) | **yes, unavoidable** | gas ETH + the cycle in flight |
+| **Dev wallet** (`DEV_PAYOUT_ADDRESS`) | **no — an address only** | your accumulated cut |
+
+`DEV_PAYOUT_ADDRESS` takes an address, never a key: that wallet only ever
+receives, so its key can live in a hardware wallet and never touch the server.
+Each cycle forwards the dev cut there, so a compromised server costs you gas and
+at most one cycle's cut rather than every fee you have ever earned.
+
+Leave it blank and the dev cut simply accumulates in the bot wallet — supported,
+but then you are the one who has to remember to sweep it.
+
+The forward is recorded as its own `dev` step, never as an airdrop, so it can
+never appear in the public `/rewards` feed or inflate `totalRewarded`. It is
+also non-fatal: by the time it runs the holders have already been paid, so a
+failure leaves the cut safe in the bot wallet and retries next cycle rather than
+marking a successful airdrop as failed.
+
+A malformed `DEV_PAYOUT_ADDRESS` is refused at **startup**, not mid-cycle — a
+valid-looking typo would otherwise send the cut somewhere unrecoverable on every
+future cycle.
 
 ## Gas is not self-funding
 
@@ -147,6 +176,7 @@ Everything is documented in `.env.example`. The ones worth knowing first:
 | `REWARD_TOKEN_ADDRESS` | SPCX | the quote asset **and** the reward asset — one address, both roles |
 | `CLAIM_EVERY_USD` | `100` | fire once the accrued SPCX is worth this |
 | `REWARD_PCT` | `80` | share to holders; the rest is the dev cut |
+| `DEV_PAYOUT_ADDRESS` | — | cold address the dev cut is forwarded to; blank = it stays in the bot wallet |
 | `MIN_HOLD` | `100000` | minimum SPACEINU balance to qualify |
 | `REWARD_CAP_PCT` | `0` | per-wallet weight cap, % of supply (0 = pure pro-rata) |
 | `DISPERSE_ADDRESS` | — | batch-transfer contract; blank → one transfer per recipient |

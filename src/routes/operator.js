@@ -41,7 +41,13 @@ function buildStatus({ scheduler: s, feeCheck, walletAddress: address, ethBalanc
       claimEveryUsd: config.claimEveryUsd,
       schedule: config.pollSchedule,
     },
-    split: { rewardPct: config.rewardPct, devPct: config.devPct, minHold: config.minHold },
+    split: {
+      rewardPct: config.rewardPct,
+      devPct: config.devPct,
+      minHold: config.minHold,
+      // null means the dev cut accumulates in the hot wallet — worth seeing.
+      devPayoutAddress: config.devPayoutAddress,
+    },
     wallet: {
       address,
       ephemeral: config.walletIsEphemeral,

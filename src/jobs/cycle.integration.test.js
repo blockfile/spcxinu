@@ -62,11 +62,47 @@ test('a funded vault claims, splits and airdrops to holders', async () => {
   assert.strictEqual(cycle.quote_distributed, 8, '80% goes to holders');
 
   const names = cycle.steps.map((s) => s.name);
-  assert.deepStrictEqual(names, ['sweep', 'claim', 'airdrop'], 'no buy step exists in this bot');
+  assert.deepStrictEqual(names, ['sweep', 'claim', 'airdrop', 'dev'], 'no buy step exists in this bot');
 
   const airdropStep = cycle.steps.find((s) => s.name === 'airdrop');
   assert.strictEqual(airdropStep.status, 'ok');
   assert.ok(airdropStep.detail.sent > 0, 'the simulated holders were paid');
+});
+
+test('with no DEV_PAYOUT_ADDRESS the dev cut is skipped, not failed', async () => {
+  simvault.reset(10);
+  const cycle = await runCycle();
+  const dev = cycle.steps.find((s) => s.name === 'dev');
+  assert.strictEqual(dev.status, 'skipped');
+  assert.match(dev.detail.reason, /not set/);
+  assert.strictEqual(cycle.status, 'complete', 'an unconfigured dev payout must not fail the cycle');
+});
+
+test('with DEV_PAYOUT_ADDRESS set, the dev cut is forwarded and stays out of the public feed', async () => {
+  process.env.DEV_PAYOUT_ADDRESS = '0xC8f686977655879f741f9AA693432081210774EF';
+  for (const m of ['../config', '../evm/devpayout', './cycle']) delete require.cache[require.resolve(m)];
+  const { runCycle: run } = require('./cycle');
+
+  simvault.reset(10);
+  const cycle = await run();
+
+  const dev = cycle.steps.find((s) => s.name === 'dev');
+  assert.strictEqual(dev.status, 'ok');
+  assert.strictEqual(dev.detail.amount, 2, '20% of a 10 SPCX claim');
+  assert.strictEqual(dev.detail.to, '0xc8f686977655879f741f9aa693432081210774ef');
+
+  // The dev cut must never be recorded as a holder payout: it is not a reward,
+  // and counting it would inflate totalRewarded and show up in /rewards.
+  const air = await db.getDb().collection('airdrops').find({ cycle_id: cycle.id }).toArray();
+  assert.ok(
+    !air.some((r) => String(r.recipient).toLowerCase() === '0xc8f686977655879f741f9aa693432081210774ef'),
+    'the dev address must not appear in the airdrop ledger'
+  );
+  const paid = air.reduce((s, r) => s + (r.amount_ui || 0), 0);
+  assert.ok(Math.abs(paid - 8) < 1e-9, 'holders were paid exactly the 80%, with the dev cut excluded');
+
+  process.env.DEV_PAYOUT_ADDRESS = '';
+  for (const m of ['../config', '../evm/devpayout', './cycle']) delete require.cache[require.resolve(m)];
 });
 
 test('the vault is drained by the claim, so the next cycle finds nothing', async () => {

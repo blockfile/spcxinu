@@ -103,6 +103,9 @@ async function main() {
   console.log(`  dexscreener: chain "${config.dexscreenerChainId}"`);
   console.log(`  pons api   : ${config.ponsApi}`);
   console.log(`  split      : ${config.rewardPct}% holders / ${config.devPct}% dev`);
+  console.log(
+    `  dev payout : ${config.devPayoutAddress || '⚠️ not set — the dev cut accumulates in the bot wallet'}`
+  );
   console.log(`  minHold    : ${config.minHold} ${config.tokenSymbol} to qualify`);
   console.log(`  trigger    : ${config.triggerMode}${config.triggerMode === 'accumulation' ? ` at $${config.claimEveryUsd}` : ''} on "${config.pollSchedule}"`);
   console.log(`  dryRun     : ${config.dryRun}`);

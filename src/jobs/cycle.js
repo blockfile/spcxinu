@@ -5,7 +5,8 @@
 //   sweep pending fees into the escrow   (best-effort — may need pons's operator)
 //   claimToken(SPCX)                     -> SPCX in the wallet
 //     -> REWARD_PCT: airdrop pro-rata to SPACEINU holders
-//     -> remainder:  stays in the wallet as SPCX (the dev cut)
+//     -> remainder:  the dev cut — forwarded to DEV_PAYOUT_ADDRESS if one is
+//                    set, otherwise left in the wallet
 //
 // There is NO buy leg. SPACEINU is quoted in SPCX, so the creator fees arrive
 // already denominated in the asset holders are paid in — nothing is ever
@@ -27,12 +28,12 @@ const { buildExcludeSet } = require('../evm/exclude');
 const { computeWeightedAllocations } = require('../services/distribution');
 const { airdropToken } = require('../evm/airdrop');
 const { toUnitString } = require('../evm/units');
+const { sendDevPayout, describeOutcome: describeDevPayout } = require('../evm/devpayout');
 const { provider } = require('../evm/provider');
 
 /**
  * Split a claim into its two legs. Pure, so the invariant that the legs re-add
- * to the claim is directly testable. The dev cut needs no transaction — it is
- * already SPCX sitting in the wallet once the claim lands.
+ * to the claim is directly testable.
  */
 function splitClaim(claimedQuote) {
   const rewardQuote = +(claimedQuote * (config.rewardPct / 100)).toFixed(9);
@@ -245,7 +246,25 @@ async function runCycle() {
       log(`reward leg skipped: ${reason}`);
     }
 
-    // 5. The dev cut needs no transaction: it is already SPCX in the wallet.
+    // 5. Forward the dev cut to the cold address, if one is configured.
+    //    Recorded as its own step, never as an airdrop: it is not a holder
+    //    reward, and logging it as one would publish it in the public feed and
+    //    inflate totalRewarded. Non-fatal — the holders have already been paid,
+    //    and a failure here leaves the cut safe in the bot wallet.
+    const devPayout = await sendDevPayout({ quoteAmount: devQuote });
+    await repo.addStep({
+      cycleId: id,
+      name: 'dev',
+      status: devPayout.sent ? 'ok' : devPayout.skipped ? 'skipped' : 'failed',
+      signature: devPayout.signature,
+      detail: {
+        amount: devQuote,
+        to: devPayout.to,
+        reason: devPayout.reason ?? null,
+        error: devPayout.error ?? null,
+      },
+    });
+    log(describeDevPayout(devPayout));
 
     const outcome = summarizeReward(reward);
     await repo.finishCycle(id, {

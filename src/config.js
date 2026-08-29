@@ -1,6 +1,6 @@
 'use strict';
 require('dotenv').config();
-const { Wallet } = require('ethers');
+const { Wallet, isAddress } = require('ethers');
 
 function num(v, d) {
   if (v === undefined || v === '') return d;
@@ -49,6 +49,18 @@ function loadWallet() {
   }
 }
 const { wallet, ephemeral: walletIsEphemeral } = loadWallet();
+
+// Where the dev cut is sent at the end of each cycle. Optional: blank leaves it
+// in the bot wallet, which is the old behaviour.
+//
+// Validated HERE rather than at send time on purpose. A typo'd address would
+// otherwise be discovered only once a cycle had already claimed and paid the
+// holders, and — if the typo happened to be a valid-looking address — would send
+// the dev cut somewhere unrecoverable, every cycle, silently.
+const devPayoutAddress = lowerOrNull(process.env.DEV_PAYOUT_ADDRESS);
+if (devPayoutAddress && !isAddress(devPayoutAddress)) {
+  throw new Error(`DEV_PAYOUT_ADDRESS is not a valid address: ${process.env.DEV_PAYOUT_ADDRESS}`);
+}
 
 const rewardPct = num(process.env.REWARD_PCT, 80);
 if (!(rewardPct >= 0 && rewardPct <= 100)) {
@@ -157,6 +169,10 @@ const config = {
   // this balance a cycle refuses to start rather than claiming and then failing
   // to pay anyone out.
   gasReserveEth: num(process.env.GAS_RESERVE_ETH, 0.01),
+  // Cold address that receives the dev cut each cycle. Blank = it stays in the
+  // bot wallet. Only an ADDRESS is needed, never a key: this wallet only
+  // receives, so its key never has to touch the server.
+  devPayoutAddress,
 
   // ── Bot: storage and control ───────────────────────────────────────────────
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017',
