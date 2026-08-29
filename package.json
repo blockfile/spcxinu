@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Stats API for the Space Inu site — serves SPACEINU market cap, holder count, total SPCX rewarded and the live rewards feed.",
-  "homepage": "https://spaceinu.meme",
+  "homepage": "https://spaceinu.tech",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {

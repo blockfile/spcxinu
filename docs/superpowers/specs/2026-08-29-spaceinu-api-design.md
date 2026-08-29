@@ -5,8 +5,8 @@ Status: approved (ticker flagged below)
 
 ## Purpose
 
-Backend stats API for the **Space Inu** site — **spaceinu.meme**, API at
-`api.spaceinu.meme`. It is a rebranded copy of `ryzenkitty-api`
+Backend stats API for the **Space Inu** site — **spaceinu.tech**, API at
+`api.spaceinu.tech`. It is a rebranded copy of `ryzenkitty-api`
 (`d:\projects\ryzenkitty-api`, spec `2026-08-29-ryzenkitty-api-design.md`
 there), with identical functions:
 
@@ -27,7 +27,7 @@ until `TOKEN_ADDRESS` is set.
 | ------------------------------------------------ | --------------------------------------------- |
 | package `ryzenkitty-api`, log prefix `[ryzenkitty]` | `spaceinu-api`, `[spaceinu]`               |
 | `TOKEN_SYMBOL` default `RYZEN`, name `Ryzen Kitty` | `SPACEINU`, `Space Inu`                     |
-| site `ryzenkitty.meme` (CORS, homepage, User-Agent) | `spaceinu.meme`, `www.spaceinu.meme`       |
+| site `ryzenkitty.meme` (CORS, homepage, User-Agent) | `spaceinu.tech`, `www.spaceinu.tech`       |
 | reward asset AMD `0x86923f…3fdC`                 | **SPCX** `0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa` ("Space Exploration Technologies Corp • Robinhood Token", 18 decimals) |
 | `/stats.amdRewarded`                             | `/stats.spcxRewarded` (+ generic `rewarded`)  |
 
@@ -83,7 +83,7 @@ Expected to be a copy of the ryzen `Meme1` template (`d:\projects\ryzen\Meme1`):
 `GET /token` once (reads `ticker`), `GET /stats` for `marketCap` +
 `ketDistributed`, `GET /rewards` polled every 15 s reading `transactions[]`.
 No API changes are needed for it. Its `.env.local`: `VITE_USE_MOCK=false`,
-`VITE_API_BASE_URL=https://api.spaceinu.meme`. Its `src/config/site.js` should
+`VITE_API_BASE_URL=https://api.spaceinu.tech`. Its `src/config/site.js` should
 carry `rewardTicker: '$SPCX'` and
 `rewardContractAddress: '0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa'`.
 
