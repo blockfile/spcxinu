@@ -189,10 +189,29 @@ Without `DISPERSE_ADDRESS`, the airdrop sends one ERC-20 transfer per recipient
 (pipelined, up to `AIRDROP_BATCH_SIZE` in flight, with a locally-tracked nonce).
 That is fine at a few hundred holders and expensive at a few thousand.
 
-Deploy a Disperse contract and set `DISPERSE_ADDRESS` before the holder list
-grows — each batch then becomes one `disperseToken` transaction. Note the reward
-token needs an `approve()` to that contract first; the bot does not do this for
-you.
+Setting `DISPERSE_ADDRESS` turns each batch into a single transaction. Two
+things have to be true before you do, and both fail loudly *after* the escrow
+has been claimed if they are not:
+
+**1. It must be an ERC-20 disperser exposing exactly this signature:**
+
+```solidity
+function disperseToken(address token, address[] recipients, uint256[] values)
+```
+
+`pons-launcher/contracts/Disperse.sol` is **not** it — that contract is native
+ETH only (`disperse` / `disperseEqual`, both `payable`) and has no
+`disperseToken`. Pointing `DISPERSE_ADDRESS` at it makes every batch revert on
+an unknown selector.
+
+**2. The wallet must `approve()` SPCX to that contract first.** The bot does not
+do this for you, and a missing approval is the first suspect named in the
+"airdrop delivered nothing" error for exactly this reason.
+
+SPCX itself disperses fine — it is a standard OpenZeppelin-style ERC-20
+(`approve`, `transfer` and `transferFrom` all verified against the live
+contract; not paused; no allowlist, blacklist or transfer hook), despite being
+a tokenized equity.
 
 ## Going live
 
