@@ -12,10 +12,15 @@ burning it, and reports what it did to the site.
 SPACEINU trades  →  creator fees accrue on-chain, denominated in SPCX
       ↓  sweep              push pending fees into the pons fee escrow
       ↓  claimToken(SPCX)   withdraw the escrow → the bot's wallet
-      ├─ 80% → airdrop SPCX pro-rata to SPACEINU holders
-      ├─ 20% → buy SPACEINU with it, then BURN what was bought
-      └─  0% → dev cut: whatever the other two leave (none at 80/20)
+      ├─ 10% → sell for native ETH, so the bot can pay its own gas
+      ├─ 65% → airdrop SPCX pro-rata to SPACEINU holders
+      ├─ 25% → buy SPACEINU with it, then BURN what was bought
+      └─  0% → dev cut: whatever the other three leave (none at 65/25/10)
 ```
+
+The gas leg runs **first**. The airdrop that follows sends one transaction per
+holder, so topping up beforehand is what stops a cycle running dry halfway
+through paying people.
 
 **The reward leg never swaps.** Fees arrive already denominated in SPCX, which
 is exactly what holders are paid — so slippage, quoting and venue dispatch exist
@@ -114,15 +119,23 @@ So: `chmod 600 .env`, key-only SSH, nothing else on the box. `feeRecipientOk` on
 dev cut, and if you later move to a split that leaves one, pointing it at a cold
 address is how you keep those earnings off the server.
 
-## Gas is not self-funding
+## Gas funds itself
 
-Everything the bot collects is SPCX; gas is ETH. Unlike an ETH-quoted launch,
-**the wallet cannot refill its own gas from what it collects** — it needs an
-independently topped-up ETH balance, and a cycle's airdrop transfers plus the
-buyback swap steadily drain it.
+Everything the bot collects is SPCX; every transaction it sends costs ETH. The
+`GAS_PCT` leg closes that gap by selling a slice of each claim for native ETH,
+so the wallet refills itself instead of needing manual top-ups forever.
 
-`GAS_RESERVE_ETH` guards this: below it, a cycle refuses to *start*, rather than
-claiming the escrow and then failing to pay anyone out.
+The route is an **independent** Uniswap v4 pool — SPCX is a tokenized equity
+with its own markets, nothing to do with the pons launch pool — so its key is
+configured (`GAS_POOL_FEE` / `GAS_POOL_TICK_SPACING` / `GAS_POOL_HOOKS`) rather
+than derived. This is also the only place the bot ever **sells**; both other
+legs only pay out or buy.
+
+`GAS_CEILING_ETH` stops it converting forever once enough is banked (0 = always
+swap). `GAS_RESERVE_ETH` remains the floor: below it a cycle refuses to *start*,
+rather than claiming the escrow and then failing to pay anyone out. Seed the
+wallet with a little ETH before the first live cycle — the leg cannot bootstrap
+gas it does not yet have.
 
 ## API
 
@@ -203,8 +216,10 @@ Everything is documented in `.env.example`. The ones worth knowing first:
 | `TOKEN_ADDRESS` | — | blank until launch → every stat is null |
 | `REWARD_TOKEN_ADDRESS` | SPCX | the quote asset **and** the reward asset — one address, both roles |
 | `CLAIM_EVERY_USD` | `100` | fire once the accrued SPCX is worth this |
-| `REWARD_PCT` | `80` | share airdropped to holders |
-| `BURN_PCT` | `20` | share used to buy SPACEINU and burn it |
+| `REWARD_PCT` | `65` | share airdropped to holders |
+| `BURN_PCT` | `25` | share used to buy SPACEINU and burn it |
+| `GAS_PCT` | `10` | share sold for ETH to fund the bot's own gas |
+| `GAS_CEILING_ETH` | `0` | stop converting above this ETH balance (0 = never) |
 | `SLIPPAGE_PCT` | `5` | tolerance on the buyback swap only |
 | `DEV_PAYOUT_ADDRESS` | — | cold address the dev cut is forwarded to; blank = it stays in the bot wallet |
 | `MIN_HOLD` | `100000` | minimum SPACEINU balance to qualify |

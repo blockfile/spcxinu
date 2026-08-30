@@ -74,22 +74,27 @@ if (devPayoutAddress && !isAddress(devPayoutAddress)) {
 // cut is whatever is left, so it only exists when the other two total under 100.
 // At the default 80/20 there is no dev cut at all — every SPCX collected goes
 // back to holders or into the buyback.
-const rewardPct = num(process.env.REWARD_PCT, 80);
-const burnPct = num(process.env.BURN_PCT, 20);
+const rewardPct = num(process.env.REWARD_PCT, 65);
+const burnPct = num(process.env.BURN_PCT, 25);
+const gasPct = num(process.env.GAS_PCT, 10);
 if (!(rewardPct >= 0 && rewardPct <= 100)) {
   throw new Error(`invalid split: REWARD_PCT(${rewardPct}) must be within [0, 100]`);
 }
 if (!(burnPct >= 0 && burnPct <= 100)) {
   throw new Error(`invalid split: BURN_PCT(${burnPct}) must be within [0, 100]`);
 }
-if (rewardPct + burnPct > 100) {
+if (!(gasPct >= 0 && gasPct <= 100)) {
+  throw new Error(`invalid split: GAS_PCT(${gasPct}) must be within [0, 100]`);
+}
+if (rewardPct + burnPct + gasPct > 100) {
   throw new Error(
-    `invalid split: REWARD_PCT(${rewardPct}) + BURN_PCT(${burnPct}) = ${rewardPct + burnPct} exceeds 100`
+    `invalid split: REWARD_PCT(${rewardPct}) + BURN_PCT(${burnPct}) + GAS_PCT(${gasPct}) = ` +
+    `${rewardPct + burnPct + gasPct} exceeds 100`
   );
 }
 // toFixed(6) keeps a fractional share from leaving float dust behind
 // (100 - 80.1 is 19.900000000000006 in FP).
-const devPct = +(100 - rewardPct - burnPct).toFixed(6);
+const devPct = +(100 - rewardPct - burnPct - gasPct).toFixed(6);
 
 // Accumulation is the default: this launch's fees are worth hundreds of dollars
 // per token, so firing on every tick would pay gas to move dust.
@@ -170,7 +175,18 @@ const config = {
   // ── Bot: split and eligibility ─────────────────────────────────────────────
   rewardPct,
   burnPct,
+  gasPct,
   devPct,
+  // The SPCX/ETH v4 pool the gas swap routes through. NOT derivable from the
+  // pons launch record — it is an independent Uniswap pool, so its key is
+  // configured. Defaults are the live pool verified on chain 2026-08-30
+  // (poolId 0x39910df8…, ~$103k liquidity, no hook).
+  gasPoolFee: num(process.env.GAS_POOL_FEE, 10000),
+  gasPoolTickSpacing: num(process.env.GAS_POOL_TICK_SPACING, 200),
+  gasPoolHooks: lowerOr(process.env.GAS_POOL_HOOKS, '0x0000000000000000000000000000000000000000'),
+  // Skip the gas swap once the wallet holds this much ETH, so it does not
+  // convert forever. 0 disables the ceiling — always swap.
+  gasCeilingEth: num(process.env.GAS_CEILING_ETH, 0),
   // Slippage tolerance for the buyback swap, percent. Back in play now that the
   // bot buys again — the reward leg still never swaps.
   slippagePct: num(process.env.SLIPPAGE_PCT, 5),

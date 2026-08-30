@@ -4,11 +4,16 @@
 //
 //   sweep pending fees into the escrow   (best-effort — may need pons's operator)
 //   claimToken(SPCX)                     -> SPCX in the wallet
+//     -> GAS_PCT:    sell for native ETH, so the bot can pay its own gas
 //     -> REWARD_PCT: airdrop pro-rata to SPACEINU holders
 //     -> BURN_PCT:   buy SPACEINU with it and burn what was bought
 //     -> remainder:  the dev cut — forwarded to DEV_PAYOUT_ADDRESS if one is
-//                    set, otherwise left in the wallet. At the default 80/20
-//                    it is zero.
+//                    set, otherwise left in the wallet. At the default
+//                    65/25/10 it is zero.
+//
+// The gas leg runs FIRST because the airdrop that follows sends one
+// transaction per holder: topping up before spending is what stops a cycle
+// running dry halfway through paying people.
 //
 // The REWARD leg never swaps: fees arrive already denominated in SPCX, which is
 // what holders are paid. The BUYBACK leg is the only thing in this bot that
@@ -32,6 +37,7 @@ const { airdropToken } = require('../evm/airdrop');
 const { toUnitString } = require('../evm/units');
 const { sendDevPayout, describeOutcome: describeDevPayout } = require('../evm/devpayout');
 const { buybackAndBurn, describeOutcome: describeBuyback } = require('../evm/buyback');
+const { swapQuoteForGas, describeOutcome: describeGasSwap } = require('../evm/gasswap');
 const { provider } = require('../evm/provider');
 
 /**
@@ -43,18 +49,19 @@ const { provider } = require('../evm/provider');
  * only appears when REWARD_PCT + BURN_PCT total under 100.
  */
 function splitClaim(claimedQuote) {
-  // Round to 9 places and normalise negative zero. At 80/20 the remainder is
-  // 1 - 0.8 - 0.2 = -1.1e-16, which toFixed renders as "-0.000000000" and `+`
-  // turns into -0: a value that fails a strict comparison with 0 and prints as
-  // "-0" in the cycle log.
+  // Round to 9 places and normalise negative zero. At a split that consumes the
+  // whole claim the remainder lands on -1.1e-16, which toFixed renders as
+  // "-0.000000000" and `+` turns into -0: a value that fails a strict
+  // comparison with 0 and prints as "-0" in the cycle log.
   const round = (n) => {
     const r = +n.toFixed(9);
     return r === 0 ? 0 : r;
   };
   const rewardQuote = round(claimedQuote * (config.rewardPct / 100));
   const burnQuote = round(claimedQuote * (config.burnPct / 100));
-  const devQuote = round(claimedQuote - rewardQuote - burnQuote);
-  return { rewardQuote, burnQuote, devQuote };
+  const gasQuote = round(claimedQuote * (config.gasPct / 100));
+  const devQuote = round(claimedQuote - rewardQuote - burnQuote - gasQuote);
+  return { rewardQuote, burnQuote, gasQuote, devQuote };
 }
 
 /**
@@ -248,11 +255,29 @@ async function runCycle() {
     }
 
     // 3. Split.
-    const { rewardQuote, burnQuote, devQuote } = splitClaim(claimed);
+    const { rewardQuote, burnQuote, gasQuote, devQuote } = splitClaim(claimed);
     log(
       `split: ${rewardQuote} to holders (${config.rewardPct}%), ` +
-        `${burnQuote} to buyback+burn (${config.burnPct}%), ${devQuote} to dev (${config.devPct}%)`
+        `${burnQuote} to buyback+burn (${config.burnPct}%), ` +
+        `${gasQuote} to gas (${config.gasPct}%), ${devQuote} to dev (${config.devPct}%)`
     );
+
+    // 3a. Gas first — the airdrop below sends one transaction per holder, so
+    //     topping up beforehand is what stops a cycle running dry mid-payout.
+    const gas = await swapQuoteForGas({ quoteAmount: gasQuote });
+    await repo.addStep({
+      cycleId: id,
+      name: 'gas',
+      status: gas.swapped ? 'ok' : gas.skipped ? 'skipped' : 'failed',
+      signature: gas.signature,
+      detail: {
+        quoteSpent: gas.skipped ? 0 : gasQuote,
+        ethReceived: gas.ethReceived,
+        reason: gas.reason ?? null,
+        error: gas.error ?? null,
+      },
+    });
+    log(describeGasSwap(gas));
 
     // 4. Reward leg — airdrop the claimed SPCX directly. Nothing is bought.
     let reward = { skipped: false, sent: 0, failed: 0, recipients: 0, eligibleHolders: 0, totalHolders: 0 };
@@ -315,6 +340,8 @@ async function runCycle() {
       phase,
       quote_claimed: claimed,
       quote_distributed: reward.skipped ? 0 : rewardQuote,
+      quote_gas: gas.swapped ? gasQuote : 0,
+      eth_received: gas.ethReceived,
       quote_burned: buyback.burned ? burnQuote : 0,
       tokens_burned: buyback.burned ? buyback.tokensBought : 0,
       eligible_holders: reward.eligibleHolders,

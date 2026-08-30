@@ -1,59 +1,66 @@
 'use strict';
 
 process.env.DRY_RUN = 'true';
-process.env.REWARD_PCT = '80';
-process.env.BURN_PCT = '20';
+process.env.REWARD_PCT = '65';
+process.env.BURN_PCT = '25';
+process.env.GAS_PCT = '10';
 
 const test = require('node:test');
 const assert = require('node:assert');
 const { splitClaim, summarizeReward, isFeeRecipientOk, feeRecipientWarning } = require('./cycle');
 
-test('80/20 sends everything to holders and the buyback, with no dev cut', () => {
-  const { rewardQuote, burnQuote, devQuote } = splitClaim(1);
-  assert.strictEqual(rewardQuote, 0.8);
-  assert.strictEqual(burnQuote, 0.2);
-  assert.strictEqual(devQuote, 0, 'the dev cut only appears when the other two total under 100');
+test('65/25/10 leaves no dev cut', () => {
+  const { rewardQuote, burnQuote, gasQuote, devQuote } = splitClaim(1);
+  assert.strictEqual(rewardQuote, 0.65);
+  assert.strictEqual(burnQuote, 0.25);
+  assert.strictEqual(gasQuote, 0.1);
+  assert.strictEqual(devQuote, 0, 'the dev cut is only what the other three leave');
 });
 
-test('the three legs always re-add to the claim', () => {
+test('the four legs always re-add to the claim', () => {
   for (const claimed of [0.000001, 0.5, 3.7, 1234.56789]) {
-    const { rewardQuote, burnQuote, devQuote } = splitClaim(claimed);
+    const { rewardQuote, burnQuote, gasQuote, devQuote } = splitClaim(claimed);
     assert.ok(
-      Math.abs(rewardQuote + burnQuote + devQuote - claimed) < 1e-9,
+      Math.abs(rewardQuote + burnQuote + gasQuote + devQuote - claimed) < 1e-9,
       `legs must sum for ${claimed}`
     );
   }
 });
 
 test('splitting nothing yields nothing on every leg', () => {
-  assert.deepStrictEqual(splitClaim(0), { rewardQuote: 0, burnQuote: 0, devQuote: 0 });
+  assert.deepStrictEqual(splitClaim(0), { rewardQuote: 0, burnQuote: 0, gasQuote: 0, devQuote: 0 });
 });
 
-test('a dev cut appears exactly when REWARD_PCT + BURN_PCT falls under 100', () => {
-  process.env.REWARD_PCT = '70';
+test('a dev cut appears only when the three configured legs leave one', () => {
+  process.env.REWARD_PCT = '60';
   process.env.BURN_PCT = '20';
+  process.env.GAS_PCT = '10';
   for (const m of ['../config', './cycle']) delete require.cache[require.resolve(m)];
   const { splitClaim: split } = require('./cycle');
 
-  const { rewardQuote, burnQuote, devQuote } = split(10);
-  assert.strictEqual(rewardQuote, 7);
+  const { rewardQuote, burnQuote, gasQuote, devQuote } = split(10);
+  assert.strictEqual(rewardQuote, 6);
   assert.strictEqual(burnQuote, 2);
+  assert.strictEqual(gasQuote, 1);
   assert.strictEqual(devQuote, 1);
 
-  process.env.REWARD_PCT = '80';
-  process.env.BURN_PCT = '20';
+  process.env.REWARD_PCT = '65';
+  process.env.BURN_PCT = '25';
+  process.env.GAS_PCT = '10';
   for (const m of ['../config', './cycle']) delete require.cache[require.resolve(m)];
 });
 
-test('an all-to-holders split leaves nothing to buy back', () => {
+test('an all-to-holders split leaves nothing to burn or swap', () => {
   process.env.REWARD_PCT = '100';
   process.env.BURN_PCT = '0';
+  process.env.GAS_PCT = '0';
   for (const m of ['../config', './cycle']) delete require.cache[require.resolve(m)];
   const { splitClaim: split } = require('./cycle');
-  assert.deepStrictEqual(split(5), { rewardQuote: 5, burnQuote: 0, devQuote: 0 });
+  assert.deepStrictEqual(split(5), { rewardQuote: 5, burnQuote: 0, gasQuote: 0, devQuote: 0 });
 
-  process.env.REWARD_PCT = '80';
-  process.env.BURN_PCT = '20';
+  process.env.REWARD_PCT = '65';
+  process.env.BURN_PCT = '25';
+  process.env.GAS_PCT = '10';
   for (const m of ['../config', './cycle']) delete require.cache[require.resolve(m)];
 });
 

@@ -9,7 +9,7 @@ const assert = require('node:assert');
 // Without that, a case asserting a rejected value leaves that value in the
 // environment and every later case inherits it — which showed up as three
 // unrelated tests failing after a split-validation test was added.
-const OWNED = ['REWARD_PCT', 'BURN_PCT', 'TRIGGER_MODE', 'CLAIM_EVERY_USD', 'DEV_PAYOUT_ADDRESS'];
+const OWNED = ['REWARD_PCT', 'BURN_PCT', 'GAS_PCT', 'TRIGGER_MODE', 'CLAIM_EVERY_USD', 'DEV_PAYOUT_ADDRESS'];
 
 function loadConfig(env = {}) {
   for (const k of OWNED) delete process.env[k];
@@ -18,39 +18,50 @@ function loadConfig(env = {}) {
   return require('./config');
 }
 
-test('the default 80/20 split leaves no dev cut at all', () => {
-  const config = loadConfig({ REWARD_PCT: '80', BURN_PCT: '20', DRY_RUN: 'true' });
-  assert.strictEqual(config.rewardPct, 80);
-  assert.strictEqual(config.burnPct, 20);
+test('the default 65/25/10 split leaves no dev cut at all', () => {
+  const config = loadConfig({ DRY_RUN: 'true' });
+  assert.strictEqual(config.rewardPct, 65);
+  assert.strictEqual(config.burnPct, 25);
+  assert.strictEqual(config.gasPct, 10);
   assert.strictEqual(config.devPct, 0);
 });
 
-test('the dev cut is whatever the other two legs leave behind', () => {
-  const config = loadConfig({ REWARD_PCT: '70', BURN_PCT: '20', DRY_RUN: 'true' });
+test('the dev cut is whatever the other three legs leave behind', () => {
+  const config = loadConfig({ REWARD_PCT: '60', BURN_PCT: '20', GAS_PCT: '10', DRY_RUN: 'true' });
   assert.strictEqual(config.devPct, 10);
 });
 
 test('a fractional split leaves no floating-point dust in the dev cut', () => {
-  const config = loadConfig({ REWARD_PCT: '80.1', BURN_PCT: '0', DRY_RUN: 'true' });
+  const config = loadConfig({ REWARD_PCT: '80.1', BURN_PCT: '0', GAS_PCT: '0', DRY_RUN: 'true' });
   assert.strictEqual(config.devPct, 19.9); // not 19.900000000000006
 });
 
 test('an out-of-range split is rejected outright', () => {
-  assert.throws(() => loadConfig({ REWARD_PCT: '140', BURN_PCT: '0', DRY_RUN: 'true' }), /REWARD_PCT/);
-  assert.throws(() => loadConfig({ REWARD_PCT: '10', BURN_PCT: '140', DRY_RUN: 'true' }), /BURN_PCT/);
+  assert.throws(() => loadConfig({ REWARD_PCT: '140', BURN_PCT: '0', GAS_PCT: '0', DRY_RUN: 'true' }), /REWARD_PCT/);
+  assert.throws(() => loadConfig({ REWARD_PCT: '10', BURN_PCT: '140', GAS_PCT: '0', DRY_RUN: 'true' }), /BURN_PCT/);
 });
 
 test('legs that together exceed the claim are refused', () => {
-  // Otherwise the bot would try to spend 110% of what it claimed and the third
-  // leg would silently go negative.
+  // Otherwise the bot would try to spend more than it claimed and the dev
+  // remainder would silently go negative.
   assert.throws(
-    () => loadConfig({ REWARD_PCT: '80', BURN_PCT: '30', DRY_RUN: 'true' }),
+    () => loadConfig({ REWARD_PCT: '80', BURN_PCT: '30', GAS_PCT: '0', DRY_RUN: 'true' }),
     /exceeds 100/
+  );
+  assert.throws(
+    () => loadConfig({ REWARD_PCT: '65', BURN_PCT: '25', GAS_PCT: '20', DRY_RUN: 'true' }),
+    /exceeds 100/
+  );
+  assert.throws(
+    () => loadConfig({ GAS_PCT: '140', DRY_RUN: 'true' }),
+    /GAS_PCT/
   );
 });
 
 test('the trigger defaults to a 100 USD accumulation gate', () => {
-  const config = loadConfig({ REWARD_PCT: '80', DRY_RUN: 'true' });
+  // No split overrides here — this case is about the trigger, and pinning a
+  // REWARD_PCT that no longer fits the other defaults made it fail on the split.
+  const config = loadConfig({ DRY_RUN: 'true' });
   assert.strictEqual(config.triggerMode, 'accumulation');
   assert.strictEqual(config.claimEveryUsd, 100);
 });

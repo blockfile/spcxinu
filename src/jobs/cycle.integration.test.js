@@ -7,8 +7,9 @@
 // amounts add up exactly, and that a dry run needs no network at all.
 
 process.env.DRY_RUN = 'true';
-process.env.REWARD_PCT = '80';
-process.env.BURN_PCT = '20';
+process.env.REWARD_PCT = '65';
+process.env.BURN_PCT = '25';
+process.env.GAS_PCT = '10';
 process.env.TOKEN_ADDRESS = '0x50d0d0da00ffd195d2d1d2448617ad039855ad2b';
 process.env.TOKEN_SYMBOL = 'SPACEINU';
 process.env.TOKEN_DECIMALS = '18';
@@ -60,11 +61,14 @@ test('a funded vault claims, splits and airdrops to holders', async () => {
 
   assert.strictEqual(cycle.status, 'complete', cycle.error || '');
   assert.strictEqual(cycle.quote_claimed, 10);
-  assert.strictEqual(cycle.quote_distributed, 8, '80% goes to holders');
-  assert.strictEqual(cycle.quote_burned, 2, '20% goes to the buyback');
+  assert.strictEqual(cycle.quote_distributed, 6.5, '65% goes to holders');
+  assert.strictEqual(cycle.quote_burned, 2.5, '25% goes to the buyback');
+  assert.strictEqual(cycle.quote_gas, 1, '10% is sold for gas');
 
   const names = cycle.steps.map((s) => s.name);
-  assert.deepStrictEqual(names, ['sweep', 'claim', 'airdrop', 'buyback', 'dev']);
+  // Gas comes BEFORE the airdrop: the airdrop sends one transaction per holder,
+  // so the top-up has to land first or a cycle can run dry mid-payout.
+  assert.deepStrictEqual(names, ['sweep', 'claim', 'gas', 'airdrop', 'buyback', 'dev']);
 
   const airdropStep = cycle.steps.find((s) => s.name === 'airdrop');
   assert.strictEqual(airdropStep.status, 'ok');
@@ -77,7 +81,7 @@ test('the buyback buys SPACEINU with the burn share and destroys it', async () =
 
   const buyback = cycle.steps.find((s) => s.name === 'buyback');
   assert.strictEqual(buyback.status, 'ok');
-  assert.strictEqual(buyback.detail.quoteSpent, 2, '20% of a 10 SPCX claim');
+  assert.strictEqual(buyback.detail.quoteSpent, 2.5, '25% of a 10 SPCX claim');
   assert.strictEqual(buyback.detail.bought, true);
   assert.strictEqual(buyback.detail.burned, true);
   assert.ok(buyback.detail.tokensBought > 0);
@@ -89,12 +93,13 @@ test('the buyback is NOT a holder payout and never reaches the rewards feed', as
   const cycle = await runCycle();
   const air = await db.getDb().collection('airdrops').find({ cycle_id: cycle.id }).toArray();
   const paid = air.reduce((s, r) => s + (r.amount_ui || 0), 0);
-  assert.ok(Math.abs(paid - 8) < 1e-9, 'holders got the 80%, with the burn share excluded');
+  assert.ok(Math.abs(paid - 6.5) < 1e-9, 'holders got the 65%, with the burn and gas shares excluded');
 });
 
-test('with BURN_PCT=0 the buyback is skipped and holders take everything', async () => {
+test('with BURN_PCT and GAS_PCT at 0, holders take everything', async () => {
   process.env.REWARD_PCT = '100';
   process.env.BURN_PCT = '0';
+  process.env.GAS_PCT = '0';
   for (const m of ['../config', '../evm/buyback', '../evm/devpayout', './cycle']) {
     delete require.cache[require.resolve(m)];
   }
@@ -107,8 +112,9 @@ test('with BURN_PCT=0 the buyback is skipped and holders take everything', async
   assert.strictEqual(cycle.quote_distributed, 10, 'all of it to holders');
   assert.strictEqual(cycle.status, 'complete');
 
-  process.env.REWARD_PCT = '80';
-  process.env.BURN_PCT = '20';
+  process.env.REWARD_PCT = '65';
+  process.env.BURN_PCT = '25';
+  process.env.GAS_PCT = '10';
   for (const m of ['../config', '../evm/buyback', '../evm/devpayout', './cycle']) {
     delete require.cache[require.resolve(m)];
   }
@@ -123,12 +129,13 @@ test('with no DEV_PAYOUT_ADDRESS the dev cut is skipped, not failed', async () =
   assert.strictEqual(cycle.status, 'complete', 'an unconfigured dev payout must not fail the cycle');
 });
 
-test('at 70/20 the dev remainder is forwarded, and stays out of the public feed', async () => {
-  // A dev cut only exists when REWARD_PCT + BURN_PCT falls under 100, so this
-  // case needs a split that leaves one — at the default 80/20 there is nothing
-  // to forward, which the preceding test covers.
-  process.env.REWARD_PCT = '70';
+test('a dev remainder is forwarded, and stays out of the public feed', async () => {
+  // A dev cut only exists when the three configured legs fall under 100, so
+  // this case needs a split that leaves one — at the default 65/25/10 there is
+  // nothing to forward, which the preceding test covers.
+  process.env.REWARD_PCT = '60';
   process.env.BURN_PCT = '20';
+  process.env.GAS_PCT = '10';
   process.env.DEV_PAYOUT_ADDRESS = '0xC8f686977655879f741f9AA693432081210774EF';
   const RELOAD = ['../config', '../evm/buyback', '../evm/devpayout', './cycle'];
   for (const m of RELOAD) delete require.cache[require.resolve(m)];
@@ -150,13 +157,29 @@ test('at 70/20 the dev remainder is forwarded, and stays out of the public feed'
     'the dev address must not appear in the airdrop ledger'
   );
   const paid = air.reduce((s, r) => s + (r.amount_ui || 0), 0);
-  assert.ok(Math.abs(paid - 7) < 1e-9, 'holders were paid exactly the 70%');
+  assert.ok(Math.abs(paid - 6) < 1e-9, 'holders were paid exactly the 60%');
   assert.strictEqual(cycle.quote_burned, 2, 'and the buyback still took its 20%');
+  assert.strictEqual(cycle.quote_gas, 1, 'and the gas leg its 10%');
 
-  process.env.REWARD_PCT = '80';
-  process.env.BURN_PCT = '20';
+  process.env.REWARD_PCT = '65';
+  process.env.BURN_PCT = '25';
+  process.env.GAS_PCT = '10';
   process.env.DEV_PAYOUT_ADDRESS = '';
   for (const m of RELOAD) delete require.cache[require.resolve(m)];
+});
+
+test('the gas leg sells its share for ETH before the airdrop spends any', async () => {
+  simvault.reset(10);
+  const cycle = await runCycle();
+
+  const gas = cycle.steps.find((s) => s.name === 'gas');
+  assert.strictEqual(gas.status, 'ok');
+  assert.strictEqual(gas.detail.quoteSpent, 1, '10% of a 10 SPCX claim');
+  assert.ok(gas.detail.ethReceived > 0, 'it returned ETH');
+  assert.ok(cycle.eth_received > 0, 'and the cycle recorded it');
+
+  const names = cycle.steps.map((s) => s.name);
+  assert.ok(names.indexOf('gas') < names.indexOf('airdrop'), 'gas must land before the payouts');
 });
 
 test('the vault is drained by the claim, so the next cycle finds nothing', async () => {
@@ -183,7 +206,7 @@ test('recorded payouts sum EXACTLY to the amount distributed — no dust', async
 
   const decimals = config.rewardDecimals;
   const totalRaw = all.reduce((sum, r) => sum + BigInt(r.amount_raw), 0n);
-  const expectedRaw = BigInt(Math.round(3.7 * 0.8 * 10 ** 9)) * 10n ** BigInt(decimals - 9);
+  const expectedRaw = BigInt(Math.round(3.7 * 0.65 * 10 ** 9)) * 10n ** BigInt(decimals - 9);
   assert.strictEqual(totalRaw, expectedRaw, 'allocations must sum to the distributed amount exactly');
 });
 
