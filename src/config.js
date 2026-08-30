@@ -149,6 +149,11 @@ const config = {
   // purpose: pons's fee distributor and this bot are mutually exclusive, and
   // keeping the key around would suggest they can coexist.
   feedTtlMs: num(process.env.FEED_TTL_MS, 30_000),
+  // Explorer link base for a transaction hash, sent with every payout row.
+  // The site only falls back to its own (Ethereum) explorer when the API omits
+  // txUrl, which is how reward links ended up pointing at etherscan.io for a
+  // Robinhood Chain transaction. Trailing slash included.
+  explorerTxBase: (process.env.EXPLORER_TX_BASE || 'https://rh-scan.com/tx/').replace(/\/*$/, '/'),
 
   // Comma-separated allowlist of browser origins. Non-browser requests (no
   // Origin header) always pass; "*" allows any origin.

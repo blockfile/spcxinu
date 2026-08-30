@@ -30,10 +30,26 @@ test('rejects a malformed cursor with a 400', () => {
 });
 
 test('presents the page as the site\'s `transactions` (ISO timestamp) and as `rows` (epoch ms)', () => {
-  const row = { id: '0xabc-60', amount: 0.00031, wallet: '0xfF33', txHash: '0xabc', at: Date.UTC(2026, 7, 27, 17, 5, 22) };
+  const row = {
+    id: '0xabc-60',
+    amount: 0.00031,
+    wallet: '0xfF33',
+    txHash: '0xabc',
+    txUrl: 'https://rh-scan.com/tx/0xabc',
+    at: Date.UTC(2026, 7, 27, 17, 5, 22),
+  };
   const out = presentPage({ rows: [row], nextCursor: '47607407-27' });
   assert.deepStrictEqual(out.transactions, [
-    { id: '0xabc-60', wallet: '0xfF33', amount: 0.00031, txHash: '0xabc', timestamp: '2026-08-27T17:05:22.000Z' },
+    {
+      id: '0xabc-60',
+      wallet: '0xfF33',
+      amount: 0.00031,
+      txHash: '0xabc',
+      // Passed through so the site links to THIS chain rather than falling back
+      // to its own Ethereum explorer.
+      txUrl: 'https://rh-scan.com/tx/0xabc',
+      timestamp: '2026-08-27T17:05:22.000Z',
+    },
   ]);
   assert.deepStrictEqual(out.rows, [row]);
   assert.strictEqual(out.nextCursor, '47607407-27');

@@ -11,7 +11,9 @@
 // `amount` is an SPCX token amount (the site formats it and appends its own
 // reward ticker), `timestamp` is ISO-8601, `txHash` is linked to the Robinhood
 // Chain explorer by the site. `symbol`/`txUrl` are deliberately omitted so the
-// site's own SITE.rewardTicker / SITE.explorerTxBase apply.
+// site's own SITE.rewardTicker applies. `txUrl` IS sent, though: the site only
+// builds its own link when the API omits one, and its fallback points at
+// Ethereum's explorer rather than this chain's.
 //
 // The same page is also returned as `rows` (+ `nextCursor`) for the
 // cursor-paging frontends in this lineage — `at` there is epoch ms. See
@@ -46,6 +48,7 @@ function toTransaction(row) {
     wallet: row.wallet,
     amount: row.amount,
     txHash: row.txHash,
+    txUrl: row.txUrl,
     timestamp: row.at === null ? null : new Date(row.at).toISOString(),
   };
 }

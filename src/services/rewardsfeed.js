@@ -38,8 +38,14 @@ function parseCursor(cursor) {
   return Number(cursor);
 }
 
+/** Pure: an explorer link for a transaction hash, or null without one. */
+function txUrlFor(txHash, base) {
+  if (!txHash || !base) return null;
+  return `${base}${txHash}`;
+}
+
 /** Pure: a stored airdrop row -> the feed row the route serves. */
-function toRow(row) {
+function toRow(row, explorerTxBase = config.explorerTxBase) {
   const at = Date.parse(row.created_at);
   return {
     id: String(row.id),
@@ -48,6 +54,10 @@ function toRow(row) {
     // amount is always known for a payout that actually happened.
     amount: row.amount_ui ?? 0,
     txHash: row.signature,
+    // Sent explicitly because the site only builds its own link when this is
+    // absent — and its fallback points at Ethereum's explorer, which is the
+    // wrong chain entirely for these transactions.
+    txUrl: txUrlFor(row.signature, explorerTxBase),
     at: Number.isFinite(at) ? at : null, // epoch ms
   };
 }
@@ -62,4 +72,4 @@ async function fetchFeedPage({ cursor = null, limit }) {
 const pages = cachedByKey(config.feedTtlMs, (cursor, limit) => fetchFeedPage({ cursor, limit }));
 const getFeedPage = (cursor, limit) => pages(`${cursor ?? ''}|${limit}`, cursor, limit);
 
-module.exports = { getFeedPage, fetchFeedPage, parseCursor, toRow, EMPTY_PAGE };
+module.exports = { getFeedPage, fetchFeedPage, parseCursor, toRow, txUrlFor, EMPTY_PAGE };
