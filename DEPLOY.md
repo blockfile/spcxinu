@@ -1,6 +1,8 @@
 # Deploying spaceinu to Ubuntu 24.04
 
-Two PM2 processes over one MongoDB:
+Site: **https://spaceinu.art** · API: **https://api.spaceinu.art**
+
+Two PM2 processes over one MongoDB, from `/var/www/spaceinu`:
 
 | Process | Port | Reachable from |
 | --- | --- | --- |
@@ -8,8 +10,7 @@ Two PM2 processes over one MongoDB:
 | `spaceinu-bot` (`bot.js`) | 3100 | **localhost only** — never proxied |
 
 The bot holds the wallet key and `POST /run` pays real money out, so its port
-stays off the internet. That separation is the point of the split; do not
-collapse it back into one process.
+stays off the internet. Do not collapse the two back into one process.
 
 **Before you start:** point a DNS `A` record for `api.spaceinu.art` at the
 server's public IP and let it propagate (`dig +short api.spaceinu.art`).
@@ -21,7 +22,14 @@ Certbot cannot issue a certificate until it resolves.
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y curl git ufw ca-certificates gnupg
 sudo timedatectl set-timezone UTC
-sudo adduser --disabled-password --gecos "" spaceinu
+```
+
+A dedicated system user owns the code and runs both processes — neither needs
+root, and the `.env` holding the wallet key should not be readable by anyone
+else:
+
+```bash
+sudo adduser --system --group --shell /bin/bash --home /var/www/spaceinu spaceinu
 ```
 
 ## 2. Firewall
@@ -35,9 +43,10 @@ sudo ufw enable
 sudo ufw status
 ```
 
-## 3. Node.js 22 LTS
+## 3. Node.js 22 LTS + npm
 
-`package.json` requires Node >= 20 and the code uses global `fetch`.
+`package.json` requires Node >= 20 and the code uses the global `fetch`.
+Ubuntu's own repo ships an older Node, so use NodeSource. npm comes with it.
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -47,7 +56,8 @@ node -v && npm -v      # expect v22.x
 
 ## 4. MongoDB 8.0
 
-Both processes share it. Ubuntu 24.04 is `noble`:
+Required — the bot writes its payout ledger here and the API reads it. Ubuntu
+24.04 is `noble`:
 
 ```bash
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
@@ -62,33 +72,49 @@ sudo systemctl enable --now mongod
 sudo systemctl status mongod --no-pager
 ```
 
-It listens on `127.0.0.1` only by default — leave it that way.
+It binds `127.0.0.1` only by default. Leave it that way — nothing external
+needs it.
 
-## 5. Clone and configure
+## 5. Clone into /var/www
 
 ```bash
-sudo su - spaceinu
-git clone https://github.com/blockfile/spcxinu.git ~/spaceinu
-cd ~/spaceinu
-npm ci --omit=dev
+sudo mkdir -p /var/www
+sudo chown spaceinu:spaceinu /var/www/spaceinu 2>/dev/null || sudo mkdir -p /var/www/spaceinu
+sudo chown -R spaceinu:spaceinu /var/www/spaceinu
 
-cp .env.example .env
-nano .env
-chmod 600 .env          # do this — it holds the wallet key
+sudo -u spaceinu git clone https://github.com/blockfile/spcxinu.git /var/www/spaceinu
+cd /var/www/spaceinu
+sudo -u spaceinu npm ci --omit=dev
 ```
 
-Minimum production values:
+## 6. Configure
+
+```bash
+sudo -u spaceinu cp .env.example .env
+sudo -u spaceinu nano .env
+sudo chmod 600 .env
+sudo chown spaceinu:spaceinu .env
+```
+
+Values for this deployment:
 
 ```ini
 PORT=3000
 BOT_PORT=3100
+
 TOKEN_ADDRESS=                 # blank until SPACEINU launches
 TOKEN_SYMBOL=SPACEINU
-WALLET_PRIVATE_KEY=            # SPACEINU's creatorFeeRecipient
-DRY_RUN=true                   # keep true for the first deploy
+TOKEN_NAME=Space Inu
+
+WALLET_PRIVATE_KEY=            # the dev/creator wallet — blank while DRY_RUN=true
+DRY_RUN=true
+
 TRIGGER_MODE=accumulation
 CLAIM_EVERY_USD=100
 REWARD_PCT=80
+BURN_PCT=20
+DEV_PAYOUT_ADDRESS=            # blank: no dev cut at 80/20
+
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=spaceinu
 API_KEY=                       # openssl rand -hex 32
@@ -99,60 +125,63 @@ CORS_ORIGINS=https://spaceinu.art,https://www.spaceinu.art
 from — a Netlify preview domain too, if you use one, or the browser gets a 403
 while curl works fine.
 
-Verify before starting anything:
+Preflight before starting anything. It sends no transactions:
 
 ```bash
-npm run check
+sudo -u spaceinu npm run check
 ```
 
-## 6. PM2 — both processes
+With `TOKEN_ADDRESS` blank it prints the config and a PRE-LAUNCH notice, which
+is correct at this stage.
+
+## 7. PM2 — both processes
 
 ```bash
 sudo npm install -g pm2
-cd ~/spaceinu
 
-pm2 start server.js --name spaceinu-api --time
-pm2 start bot.js    --name spaceinu-bot --time
-pm2 save
-pm2 logs
+cd /var/www/spaceinu
+sudo -u spaceinu pm2 start server.js --name spaceinu-api --time
+sudo -u spaceinu pm2 start bot.js    --name spaceinu-bot --time
+sudo -u spaceinu pm2 save
+sudo -u spaceinu pm2 logs
 ```
 
 **One instance of each.** Cluster mode (`-i max`) would give the API workers
-separate caches for no benefit, and would run several schedulers against one
-wallet — competing for the same nonce.
+separate caches for no gain, and would run several schedulers against one wallet,
+competing for the same nonce.
 
 Boot persistence — run exactly the `sudo env PATH=... pm2 startup systemd -u
 spaceinu ...` line it prints, then save again:
 
 ```bash
-pm2 startup systemd
+sudo -u spaceinu pm2 startup systemd
 # paste and run the sudo line it outputs, then:
-pm2 save
+sudo -u spaceinu pm2 save
 ```
 
 Log rotation:
 
 ```bash
-pm2 install pm2-logrotate
-pm2 set pm2-logrotate:max_size 20M
-pm2 set pm2-logrotate:retain 14
-pm2 set pm2-logrotate:compress true
+sudo -u spaceinu pm2 install pm2-logrotate
+sudo -u spaceinu pm2 set pm2-logrotate:max_size 20M
+sudo -u spaceinu pm2 set pm2-logrotate:retain 14
+sudo -u spaceinu pm2 set pm2-logrotate:compress true
 ```
 
-Check both are alive:
+Both alive?
 
 ```bash
 curl http://127.0.0.1:3000/health
 curl -H "x-api-key: $API_KEY" http://127.0.0.1:3100/status
 ```
 
-## 7. nginx
+## 8. nginx
 
 ```bash
 sudo apt install -y nginx
 ```
 
-Note this proxies **only** port 3000. The bot's 3100 is deliberately absent.
+This proxies **only** port 3000. The bot's 3100 is deliberately absent.
 
 ```bash
 sudo tee /etc/nginx/sites-available/api.spaceinu.art > /dev/null <<'NGINX'
@@ -187,7 +216,7 @@ sudo systemctl reload nginx
 curl http://api.spaceinu.art/health
 ```
 
-## 8. Certbot / HTTPS
+## 9. Certbot / HTTPS
 
 The site is HTTPS, so the API must be — a browser on `https://spaceinu.art`
 refuses to fetch `http://api.spaceinu.art` as mixed content.
@@ -204,64 +233,99 @@ sudo certbot renew --dry-run
 systemctl list-timers | grep certbot
 ```
 
-## 9. Verify end to end
+## 10. Verify
 
 ```bash
+curl https://api.spaceinu.art/health
 curl https://api.spaceinu.art/token
 curl https://api.spaceinu.art/stats
 curl "https://api.spaceinu.art/rewards?limit=5"
 
-# CORS — must echo the origin back
+# CORS — must echo the site's origin back
 curl -s -H "Origin: https://spaceinu.art" -D- -o /dev/null \
   https://api.spaceinu.art/stats | grep -i access-control-allow-origin
 
 # The bot must NOT be reachable from outside
-curl -m 5 https://api.spaceinu.art:3100/status   # must fail/timeout
+curl -m 5 http://api.spaceinu.art:3100/status   # must fail or time out
 ```
 
 A 403 on the CORS check means the origin is missing from `CORS_ORIGINS` — the
 usual reason the site shows placeholder data against a working API.
 
-Then set the site's `VITE_API_BASE_URL=https://api.spaceinu.art` and redeploy it.
+Then point the site at it (`VITE_API_BASE_URL=https://api.spaceinu.art`) and
+redeploy the frontend.
 
-## 10. Going live
+## 11. Dry run
 
-Stay on `DRY_RUN=true` for a while and watch `pm2 logs spaceinu-bot`. Then:
+Everything above runs with `DRY_RUN=true`, which simulates every on-chain call
+against an in-memory fee vault. No key, no RPC and no funds are involved.
+
+Force a cycle and read it:
 
 ```bash
-nano .env                       # set TOKEN_ADDRESS, WALLET_PRIVATE_KEY
-npm run check                   # the feeRecip. line MUST show ✓
-# fund the wallet with ETH for gas — the dev cut is SPCX and will not cover it
-
-curl -H "x-api-key: $API_KEY" -XPOST http://127.0.0.1:3100/run   # one dry cycle
-nano .env                       # DRY_RUN=false
-pm2 restart spaceinu-bot --update-env
-pm2 logs spaceinu-bot           # watch the first live cycle
+curl -H "x-api-key: $API_KEY" -X POST http://127.0.0.1:3100/run
+sudo -u spaceinu pm2 logs spaceinu-bot --lines 40
 ```
 
-If anything looks wrong, stop the schedule immediately without killing the API:
+A healthy dry cycle looks like:
+
+```
+[cycle 1] claimed 0.05 SPCX
+[cycle 1] split: 0.04 to holders (80%), 0.01 to buyback+burn (20%), 0 to dev (0%)
+[cycle 1] [reward] airdrop SPCX sent=2 failed=0
+[cycle 1] buyback bought 9896 SPACEINU for 0.01 SPCX and burned it
+[cycle 1] complete — airdrop sent 2
+```
+
+Simulated payouts are recorded with a fabricated signature, so they stay out of
+the public feed by design — `GET /stats` will still show `totalRewarded: 0` and
+`totalBurned: 0`. That is correct, not a bug.
+
+Leave it here until the token launches.
+
+## 12. Going live (after launch)
 
 ```bash
-curl -H "x-api-key: $API_KEY" -XPOST http://127.0.0.1:3100/pause
+cd /var/www/spaceinu
+sudo -u spaceinu nano .env      # set TOKEN_ADDRESS and WALLET_PRIVATE_KEY
+sudo -u spaceinu npm run check  # the feeRecip. line MUST show ✓
+```
+
+Fund the wallet with **ETH for gas** — the bot's income is SPCX and cannot pay
+for its own gas. Then:
+
+```bash
+sudo -u spaceinu pm2 restart spaceinu-bot --update-env   # still DRY_RUN=true
+curl -H "x-api-key: $API_KEY" -X POST http://127.0.0.1:3100/run
+# read the cycle, then:
+sudo -u spaceinu nano .env      # DRY_RUN=false
+sudo -u spaceinu pm2 restart spaceinu-bot --update-env
+sudo -u spaceinu pm2 logs spaceinu-bot
+```
+
+Stop the schedule at any time without touching the public API:
+
+```bash
+curl -H "x-api-key: $API_KEY" -X POST http://127.0.0.1:3100/pause
 ```
 
 ## Redeploying
 
 ```bash
-sudo su - spaceinu
-cd ~/spaceinu
-git pull
-npm ci --omit=dev
-pm2 restart spaceinu-api spaceinu-bot --update-env
+cd /var/www/spaceinu
+sudo -u spaceinu git pull
+sudo -u spaceinu npm ci --omit=dev
+sudo -u spaceinu pm2 restart spaceinu-api spaceinu-bot --update-env
 ```
 
 ## Operational watch-list
 
-- **Wallet ETH.** Gas is not self-funding here — the dev cut is SPCX. Watch
+- **Wallet ETH.** Gas is not self-funding — income is SPCX. Watch
   `wallet.ethBalance` against `gasReserveEth` in `GET /status`; below the
-  reserve, cycles refuse to start.
+  reserve, cycles refuse to start rather than claiming and failing to pay out.
 - **`feeRecipientOk`.** If this flips to `false`, the launch is paying someone
   else. The usual cause is pons's "route creator fees to holders" toggle being
   switched on, which reassigns the recipient to a distributor contract.
-- **`DISPERSE_ADDRESS`.** Set it before the holder count grows, or every cycle
-  pays for one transaction per recipient.
+- **`DISPERSE_ADDRESS`.** Only worth setting once holder count makes
+  per-recipient gas hurt — and it must be an ERC-20 disperser exposing
+  `disperseToken(address,address[],uint256[])`, with SPCX approved to it first.
