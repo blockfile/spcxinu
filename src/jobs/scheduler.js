@@ -161,6 +161,13 @@ async function triggerNow() {
   state.isRunning = true;
   state.lastRunAt = new Date().toISOString();
   try {
+    // DRY_RUN accrues here too, not only on a scheduler tick. A manual run is
+    // how an operator rehearses the flow, and without this it always meets an
+    // empty vault and reports "nothing claimed" — never reaching the airdrop or
+    // the buyback, which are the parts worth seeing. Live runs are untouched:
+    // there, the escrow fills from real fees.
+    if (config.dryRun) simvault.accrue(config.dryRunFeePerPoll);
+
     const cycle = await runCycle();
     state.lastResult = { id: cycle.id, status: cycle.status };
     return cycle;

@@ -172,3 +172,47 @@ test('a paused scheduler runs nothing at all', async () => {
   assert.strictEqual(out.reason, 'paused');
   resume();
 });
+
+test('a manual DRY_RUN trigger accrues BEFORE running the cycle', async () => {
+  // Without this, POST /run always met an empty vault and stopped at
+  // "nothing claimed" — never exercising the airdrop or the buyback, which are
+  // the legs an operator actually wants to rehearse.
+  //
+  // There is no database in this test, so runCycle throws at createCycle and
+  // never reaches the claim that would drain the vault. What is left in the
+  // vault is therefore exactly what triggerNow accrued.
+  _resetState();
+  const config = require('../config');
+  const simvault = require('../evm/simvault');
+  simvault.reset(0);
+
+  const { triggerNow } = require('./scheduler');
+  await triggerNow().catch(() => {});
+
+  assert.strictEqual(
+    simvault.peek(),
+    config.dryRunFeePerPoll,
+    'the vault holds one tick of simulated fees, accrued before the cycle ran'
+  );
+});
+
+test('a live trigger does NOT accrue — the escrow fills from real fees', async () => {
+  process.env.DRY_RUN = 'false';
+  process.env.WALLET_PRIVATE_KEY = `0x${'1'.repeat(64)}`;
+  for (const m of ['../config', '../evm/provider', '../evm/simvault', './cycle', './scheduler']) {
+    delete require.cache[require.resolve(m)];
+  }
+  const simvault = require('../evm/simvault');
+  const { triggerNow, _resetState: reset } = require('./scheduler');
+  reset();
+  simvault.reset(0);
+
+  await triggerNow().catch(() => {});
+  assert.strictEqual(simvault.peek(), 0, 'a live run must never invent fees');
+
+  process.env.DRY_RUN = 'true';
+  process.env.WALLET_PRIVATE_KEY = '';
+  for (const m of ['../config', '../evm/provider', '../evm/simvault', './cycle', './scheduler']) {
+    delete require.cache[require.resolve(m)];
+  }
+});
