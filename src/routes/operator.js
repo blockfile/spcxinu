@@ -41,11 +41,16 @@ function buildStatus({ scheduler: s, feeCheck, walletAddress: address, ethBalanc
       claimEveryUsd: config.claimEveryUsd,
       schedule: config.pollSchedule,
     },
+    // All four shares, so they visibly add to 100. Reporting only reward and
+    // dev made the split read as 65/0 — numbers that do not reach the claim and
+    // leave an operator hunting for the missing third.
     split: {
       rewardPct: config.rewardPct,
+      burnPct: config.burnPct,
+      gasPct: config.gasPct,
       devPct: config.devPct,
       minHold: config.minHold,
-      // null means the dev cut accumulates in the hot wallet — worth seeing.
+      // null means the dev cut accumulates in the signing wallet — worth seeing.
       devPayoutAddress: config.devPayoutAddress,
     },
     wallet: {

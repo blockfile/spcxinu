@@ -39,6 +39,15 @@ test('a mismatched fee recipient is reported as false with the address found', (
   assert.strictEqual(out.creatorFeeRecipient, '0xdistributor');
 });
 
+test('status reports every share of the split, so they add to 100', () => {
+  const out = buildStatus({ scheduler: {}, feeCheck: null, walletAddress: '0xabc', ethBalance: 1 });
+  const { rewardPct, burnPct, gasPct, devPct } = out.split;
+  for (const [name, v] of Object.entries({ rewardPct, burnPct, gasPct, devPct })) {
+    assert.strictEqual(typeof v, 'number', `${name} must be reported`);
+  }
+  assert.strictEqual(rewardPct + burnPct + gasPct + devPct, 100);
+});
+
 test('status surfaces the gas reserve alongside the balance it guards', () => {
   const out = buildStatus({ scheduler: {}, feeCheck: null, walletAddress: '0xabc', ethBalance: 0.001 });
   assert.strictEqual(out.wallet.ethBalance, 0.001);
