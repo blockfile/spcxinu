@@ -80,52 +80,39 @@ Use this bot if you want any of what the toggle cannot do: a **buyback and
 burn**, a `MIN_HOLD` eligibility threshold, anti-sybil cluster caps, exclusions,
 a dev cut, or your own trigger.
 
-## Two wallets, and why
+## The wallet
 
-The bot has to *sign* transactions, so its private key sits in `.env` on the
-server. That is unavoidable. What is avoidable is that wallet also being where
-your earnings pile up.
+One wallet does everything: it is the launch's `creatorFeeRecipient`, and it is
+what the bot signs with. `WALLET_PRIVATE_KEY` is that wallet's key, read by
+`bot.js` only — `server.js` never loads it.
 
-| | Key on the server? | Holds |
-| --- | --- | --- |
-| **Bot wallet** (`WALLET_PRIVATE_KEY`) | **yes, unavoidable** | gas ETH + the cycle in flight |
-| **Dev wallet** (`DEV_PAYOUT_ADDRESS`) | **no — an address only** | your accumulated cut |
+For this deployment that is the **dev/creator wallet**. On pons's create form,
+leaving "Creator wallet" blank uses the connected wallet, so launching from the
+dev wallet makes it the recipient automatically.
 
-`DEV_PAYOUT_ADDRESS` takes an address, never a key: that wallet only ever
-receives, so its key can live in a hardware wallet and never touch the server.
-Each cycle forwards the dev cut there, so a compromised server loses at most one
-cycle's cut in *balance* — rather than every fee you have ever collected.
+**What that means in practice:** the dev wallet's key lives in `.env` on the
+server, so the box is as valuable as that wallet. Two things follow, and neither
+is a reason not to do it — just things to know:
 
-**But the bot wallet is not disposable.** Read the verified factory source:
+- Whoever holds the key gets whatever the wallet holds.
+- They can also call `transferCreatorFeeRecipient` and permanently redirect the
+  fee stream. From the verified factory source, only the CURRENT recipient may
+  reassign it, so nothing else you control can undo that:
 
-```solidity
-function transferCreatorFeeRecipient(address token, address newRecipient) external {
-    if (msg.sender != launch.creatorFeeRecipient) revert NotCreatorFeeRecipient();
-```
+  ```solidity
+  if (msg.sender != launch.creatorFeeRecipient) revert NotCreatorFeeRecipient();
+  ```
 
-Only the CURRENT recipient may reassign itself. The deployer cannot, and neither
-can you. So whoever holds this key can permanently redirect the entire future
-fee stream to an address of their choosing, and the balance left in the wallet
-is not what is at stake. The only override is the protocol owner's, behind a
-3-day timelock (`CREATOR_FEE_RECIPIENT_TIMELOCK`) — which means asking pons.
+  The only override is the protocol owner's, behind a 3-day timelock
+  (`CREATOR_FEE_RECIPIENT_TIMELOCK`), which means asking pons.
 
-Separating the wallets limits what is STORED on the server. It does not limit
-what is AUTHORISED there. Treat the box accordingly: `chmod 600 .env`, key-only
-SSH, nothing shared. `feeRecipientOk` on `GET /status` will not prevent a theft,
-but it turns "revenue quietly stopped" into a flag within one cycle.
+So: `chmod 600 .env`, key-only SSH, nothing else on the box. `feeRecipientOk` on
+`GET /status` is re-checked every cycle — it cannot prevent a theft, but it turns
+"revenue quietly stopped" into a flag within one cycle rather than a mystery.
 
-Leave it blank and the dev cut simply accumulates in the bot wallet — supported,
-but then you are the one who has to remember to sweep it.
-
-The forward is recorded as its own `dev` step, never as an airdrop, so it can
-never appear in the public `/rewards` feed or inflate `totalRewarded`. It is
-also non-fatal: by the time it runs the holders have already been paid, so a
-failure leaves the cut safe in the bot wallet and retries next cycle rather than
-marking a successful airdrop as failed.
-
-A malformed `DEV_PAYOUT_ADDRESS` is refused at **startup**, not mid-cycle — a
-valid-looking typo would otherwise send the cut somewhere unrecoverable on every
-future cycle.
+`DEV_PAYOUT_ADDRESS` stays blank in this setup: with an 80/20 split there is no
+dev cut, and if you later move to a split that leaves one, pointing it at a cold
+address is how you keep those earnings off the server.
 
 ## Gas is not self-funding
 
@@ -258,11 +245,10 @@ a tokenized equity.
 
 ## Going live
 
-1. Launch SPACEINU on pons v2 paired with SPCX from your normal deployer
-   wallet, and type the BOT wallet's address into pons's "Creator wallet"
-   field. Leaving that field blank defaults it to the connected wallet — which
-   would make your deployer wallet the fee recipient and force its key onto the
-   server. Leave the holder-fee-sharing toggle **off**.
+1. Launch SPACEINU on pons v2 paired with SPCX, **connected as the dev wallet**.
+   Leave "Creator wallet" blank so it defaults to that connected wallet, and
+   leave the holder-fee-sharing toggle **off**. The confirm modal must read
+   "Creator fees: Paid to the creator wallet" and show the dev wallet's address.
 2. Set `TOKEN_ADDRESS` and `WALLET_PRIVATE_KEY` in `.env`.
 3. Fund the wallet with ETH for gas.
 4. `npm run check` — confirm the `feeRecip.` line shows ✓.
