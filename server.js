@@ -12,6 +12,18 @@ const { router: distributionRouter } = require('./src/routes/distribution');
 
 const app = express();
 app.disable('x-powered-by');
+
+// These responses exist to change — a gauge filling toward its threshold, a
+// feed of payouts, a market cap. Express sends an ETag and no Cache-Control by
+// default, which lets a browser serve a cached copy without revalidating: the
+// site's tank then sits frozen at whatever it first fetched while the API is
+// happily reporting fresh numbers. Answering "no-store" is not a load concern,
+// because every upstream already sits behind a TTL cache in-process.
+app.disable('etag');
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 // Behind nginx — trust its X-Forwarded-* headers so req.ip is the real client.
 app.set('trust proxy', 1);
 
