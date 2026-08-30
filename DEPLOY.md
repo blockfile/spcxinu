@@ -279,28 +279,51 @@ redeploy the frontend.
 Everything above runs with `DRY_RUN=true`, which simulates every on-chain call
 against an in-memory fee vault. No key, no RPC and no funds are involved.
 
-Force a cycle and read it:
+**A cycle still needs a `TOKEN_ADDRESS`, though.** With it blank the cycle
+refuses immediately:
+
+```json
+{"status":"failed","error":"TOKEN_ADDRESS (SPACEINU) is required"}
+```
+
+That is correct — it will not pretend to work on a token that does not exist.
+To actually rehearse the flow before launch, point it at any address: DRY_RUN
+simulates the launch record too, so the address does not need to be a real
+token.
 
 ```bash
-curl -H "x-api-key: $API_KEY" -X POST http://127.0.0.1:3100/run
-pm2 logs spaceinu-bot --lines 40
+cd /var/www/spaceinu
+export API_KEY=$(grep -E '^API_KEY=' .env | cut -d= -f2-)
+
+# a placeholder, purely to exercise the cycle
+sed -i 's/^TOKEN_ADDRESS=.*/TOKEN_ADDRESS=0x0000000000000000000000000000000000000001/' .env
+pm2 restart spaceinu-bot --update-env
+
+curl -s -H "x-api-key: $API_KEY" -X POST http://127.0.0.1:3100/run
+pm2 logs spaceinu-bot --nostream --lines 25
 ```
 
-A healthy dry cycle looks like:
+A healthy dry cycle:
 
 ```
-[cycle 1] claimed 0.05 SPCX
-[cycle 1] split: 0.04 to holders (80%), 0.01 to buyback+burn (20%), 0 to dev (0%)
-[cycle 1] [reward] airdrop SPCX sent=2 failed=0
-[cycle 1] buyback bought 9896 SPACEINU for 0.01 SPCX and burned it
-[cycle 1] complete — airdrop sent 2
+[cycle 3] claimed 0.05 SPCX
+[cycle 3] split: 0.04 to holders (80%), 0.01 to buyback+burn (20%), 0 to dev (0%)
+[cycle 3] [reward] 2 eligible holders (>= 100000) of 3 total
+[cycle 3] [reward] airdrop SPCX sent=2 failed=0
+[cycle 3] buyback bought 49xxx SPACEINU for 0.01 SPCX and burned it
+[cycle 3] complete — airdrop sent 2
+```
+
+Then put it back, so nothing points at a fake token when the real one launches:
+
+```bash
+sed -i 's/^TOKEN_ADDRESS=.*/TOKEN_ADDRESS=/' .env
+pm2 restart spaceinu-bot --update-env
 ```
 
 Simulated payouts are recorded with a fabricated signature, so they stay out of
-the public feed by design — `GET /stats` will still show `totalRewarded: 0` and
-`totalBurned: 0`. That is correct, not a bug.
-
-Leave it here until the token launches.
+the public feed by design — `GET /stats` still shows `totalRewarded: 0` and
+`totalBurned: 0` throughout. That is correct, not a bug.
 
 ## 12. Going live (after launch)
 
