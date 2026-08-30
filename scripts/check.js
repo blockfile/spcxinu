@@ -160,7 +160,8 @@ async function main() {
   console.log(`  dexscreener: chain "${config.dexscreenerChainId}"`);
   console.log(`  pons api   : ${config.ponsApi}`);
   console.log(
-    `  split      : ${config.rewardPct}% holders / ${config.burnPct}% buyback+burn / ${config.devPct}% dev`
+    `  split      : ${config.rewardPct}% holders / ${config.burnPct}% buyback+burn / ` +
+      `${config.gasPct}% gas / ${config.devPct}% dev`
   );
   // Only worth mentioning when a dev cut actually exists. At the default 80/20
   // it is zero, and warning about where nothing goes reads as a real problem.
@@ -171,7 +172,12 @@ async function main() {
   } else {
     console.log('  dev payout : n/a — no dev cut at this split');
   }
-  console.log(`  minHold    : ${config.minHold} ${config.tokenSymbol} to qualify`);
+  console.log(
+    `  minHold    : ${config.minHold} ${config.tokenSymbol} to qualify` +
+      (config.minHold < 1000
+        ? '   ⚠️ very low — nearly every holder qualifies, so expect a large recipient list and the gas that comes with it'
+        : '')
+  );
   console.log(`  trigger    : ${config.triggerMode}${config.triggerMode === 'accumulation' ? ` at $${config.claimEveryUsd}` : ''} on "${config.pollSchedule}"`);
   console.log(`  dryRun     : ${config.dryRun}`);
   console.log(`  cors       : ${config.corsOrigins.join(', ')}`);
