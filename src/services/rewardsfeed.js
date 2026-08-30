@@ -65,7 +65,12 @@ function toRow(row, explorerTxBase = config.explorerTxBase) {
 async function fetchFeedPage({ cursor = null, limit }) {
   if (!config.tokenAddress) return EMPTY_PAGE; // pre-launch: nothing paid out yet
   const page = await repo.getAirdropPage(limit, parseCursor(cursor));
-  return { rows: page.rows.map(toRow), nextCursor: page.nextCursor };
+  // Wrapped, NOT passed by reference: Array.map calls its callback with
+  // (element, index, array), so `map(toRow)` fed the index into toRow's second
+  // parameter. Index 0 is falsy and produced a null link; every later index was
+  // concatenated onto the hash, giving "50x1d29…" — which the browser resolved
+  // as a relative path on the site itself.
+  return { rows: page.rows.map((row) => toRow(row)), nextCursor: page.nextCursor };
 }
 
 // Cached per (cursor, limit) — the site polls this every 15s per open tab.
