@@ -106,9 +106,15 @@ async function main() {
   console.log(
     `  split      : ${config.rewardPct}% holders / ${config.burnPct}% buyback+burn / ${config.devPct}% dev`
   );
-  console.log(
-    `  dev payout : ${config.devPayoutAddress || '⚠️ not set — the dev cut accumulates in the bot wallet'}`
-  );
+  // Only worth mentioning when a dev cut actually exists. At the default 80/20
+  // it is zero, and warning about where nothing goes reads as a real problem.
+  if (config.devPct > 0) {
+    console.log(
+      `  dev payout : ${config.devPayoutAddress || '⚠️ not set — the dev cut accumulates in the signing wallet'}`
+    );
+  } else {
+    console.log('  dev payout : n/a — no dev cut at this split');
+  }
   console.log(`  minHold    : ${config.minHold} ${config.tokenSymbol} to qualify`);
   console.log(`  trigger    : ${config.triggerMode}${config.triggerMode === 'accumulation' ? ` at $${config.claimEveryUsd}` : ''} on "${config.pollSchedule}"`);
   console.log(`  dryRun     : ${config.dryRun}`);
