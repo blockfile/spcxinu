@@ -115,7 +115,7 @@ async function botSection(quotePriceUsd) {
  * LATE: every airdrop batch reverts, after the escrow has already been claimed.
  * A getCode here costs nothing and turns that into a line of preflight output.
  */
-async function disperserSection() {
+async function v4BuyerSection() {
   hr('V4 BUYER (buyback swap)');
   if (!config.v4BuyerAddress) {
     console.log('  address    : NOT SET — the buyback will use the UniversalRouter, which');
@@ -126,10 +126,13 @@ async function disperserSection() {
     console.log(`  address    : ${config.v4BuyerAddress}`);
     console.log(`  bytecode   : ${code === '0x' ? 'NOTHING DEPLOYED THERE' : (code.length - 2) / 2 + ' bytes'}`);
     const allow = await erc20(config.rewardTokenAddress, provider)
-      .allowance(me, config.v4BuyerAddress).catch(() => null);
+      .allowance(walletAddress(), config.v4BuyerAddress).catch(() => null);
     console.log(`  SPCX allowed: ${allow === null ? 'unknown' : formatUnits(allow, config.rewardDecimals)}`);
   }
 
+}
+
+async function disperserSection() {
   hr('DISPERSER (batch airdrop)');
 
   if (!config.disperseAddress) {
@@ -216,7 +219,6 @@ async function main() {
     console.log('  TOKEN_ADDRESS is blank — /stats answers null for every field and');
     console.log('  /rewards an empty page. That is the correct pre-launch state: the site');
     console.log('  hides the tiles and shows an empty feed.');
-    await disperserSection();
     await db.close();
     return;
   }
@@ -279,6 +281,7 @@ async function main() {
   }
 
   await botSection(quote.status === 'fulfilled' ? quote.value.priceUsd : null);
+  await v4BuyerSection();
   await disperserSection();
 
   hr('GET /stats would answer');
