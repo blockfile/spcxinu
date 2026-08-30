@@ -196,6 +196,9 @@ const config = {
   // bot buys again — the reward leg still never swaps.
   slippagePct: num(process.env.SLIPPAGE_PCT, 5),
   // Uniswap v4 periphery, needed only by the buyback swap.
+  // Our own v4 router, used INSTEAD of the UniversalRouter when set. Required
+  // for a pons pool quoted in an ERC-20: see src/evm/v4buyer.js.
+  v4BuyerAddress: lowerOrNull(process.env.V4_BUYER_ADDRESS),
   universalRouter: lowerOr(process.env.UNIVERSAL_ROUTER, '0x8876789976decbfcbbbe364623c63652db8c0904'),
   v4Quoter: lowerOr(process.env.V4_QUOTER, '0x5c3db48cfd8352d845fac70009d714f0ce1d7914'),
   permit2: lowerOr(process.env.PERMIT2, '0x000000000022d473030f116ddee9f6b43ac78ba3'),

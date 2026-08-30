@@ -29,6 +29,7 @@ const { ERC20_ABI } = require('./abi');
 const { getDecimals, readTokenBalance } = require('./erc20');
 const { buildPoolKey, poolIdOf, isZeroForOne, quoteExactInSingle, NATIVE } = require('./pool');
 const { swapExactInSingle } = require('./v4router');
+const { buyViaV4Buyer } = require('./v4buyer');
 const { quoteCurveOut, buyOnCurve } = require('./curve');
 const { sendTx } = require('./send');
 const { toUnitString } = require('./units');
@@ -100,7 +101,10 @@ async function buyToken({ launch, quoteAmountRaw }) {
         const zeroForOne = isZeroForOne(poolKey, quoteToken || NATIVE);
         const quoted = await quoteExactInSingle({ poolKey, zeroForOne, amountIn: quoteAmountRaw });
         if (quoted <= 0n) throw new Error(`v4 pool quoted zero for ${token}`);
-        const tx = await swapExactInSingle({
+        // The UniversalRouter cannot swap into a pons pool quoted in an ERC-20,
+        // so prefer our own buyer whenever one is configured.
+        const swap = config.v4BuyerAddress ? buyViaV4Buyer : swapExactInSingle;
+        const tx = await swap({
           poolKey,
           zeroForOne,
           amountIn: quoteAmountRaw,

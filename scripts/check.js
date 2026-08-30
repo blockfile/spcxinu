@@ -116,6 +116,20 @@ async function botSection(quotePriceUsd) {
  * A getCode here costs nothing and turns that into a line of preflight output.
  */
 async function disperserSection() {
+  hr('V4 BUYER (buyback swap)');
+  if (!config.v4BuyerAddress) {
+    console.log('  address    : NOT SET — the buyback will use the UniversalRouter, which');
+    console.log('               cannot swap into an SPCX-quoted pons pool. Burns will fail.');
+    console.log('               Deploy it: node scripts/deploy-v4buyer.js --confirm');
+  } else {
+    const code = await provider.getCode(config.v4BuyerAddress).catch(() => '0x');
+    console.log(`  address    : ${config.v4BuyerAddress}`);
+    console.log(`  bytecode   : ${code === '0x' ? 'NOTHING DEPLOYED THERE' : (code.length - 2) / 2 + ' bytes'}`);
+    const allow = await erc20(config.rewardTokenAddress, provider)
+      .allowance(me, config.v4BuyerAddress).catch(() => null);
+    console.log(`  SPCX allowed: ${allow === null ? 'unknown' : formatUnits(allow, config.rewardDecimals)}`);
+  }
+
   hr('DISPERSER (batch airdrop)');
 
   if (!config.disperseAddress) {
