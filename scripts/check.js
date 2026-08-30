@@ -11,7 +11,7 @@
 // config mistake (wrong CA, wrong chain slug, wrong wallet) apart from a token
 // that simply has not launched yet.
 
-const { formatEther } = require('ethers');
+const { formatEther, formatUnits, id } = require('ethers');
 const config = require('../src/config');
 const db = require('../src/db');
 const { getMarketData } = require('../src/services/marketdata');
@@ -27,6 +27,7 @@ const { escrowBalanceQuote } = require('../src/evm/escrow');
 const { sweepableQuote } = require('../src/evm/sweep');
 const { isFeeRecipientOk } = require('../src/jobs/cycle');
 const { provider, walletAddress } = require('../src/evm/provider');
+const { erc20 } = require('../src/evm/erc20');
 
 const show = (v) => (v === null || v === undefined ? '—' : v);
 const hr = (title) => console.log(`\n── ${title} ${'─'.repeat(Math.max(0, 64 - title.length))}`);
@@ -96,6 +97,61 @@ async function botSection(quotePriceUsd) {
   }
 }
 
+/**
+ * Is DISPERSE_ADDRESS actually an ERC-20 disperser?
+ *
+ * Worth its own check because both ways of getting this wrong — an address with
+ * no contract, or a contract without disperseToken — fail identically and
+ * LATE: every airdrop batch reverts, after the escrow has already been claimed.
+ * A getCode here costs nothing and turns that into a line of preflight output.
+ */
+async function disperserSection() {
+  hr('DISPERSER (batch airdrop)');
+
+  if (!config.disperseAddress) {
+    console.log('  not set — the airdrop sends one transfer per recipient.');
+    console.log('  That is fine at a few hundred holders; set it before the low thousands.');
+    return;
+  }
+
+  console.log(`  address    : ${config.disperseAddress}`);
+  let code;
+  try {
+    code = await provider.getCode(config.disperseAddress);
+  } catch (err) {
+    console.log(`  ⚠️ could not read the address: ${err.message}`);
+    return;
+  }
+
+  const size = (code.length - 2) / 2;
+  if (size === 0) {
+    console.log('  ⚠️ NO CONTRACT AT THIS ADDRESS — every airdrop batch would revert.');
+    return;
+  }
+  console.log(`  bytecode   : ${size} bytes`);
+
+  const selector = id('disperseToken(address,address[],uint256[])').slice(2, 10);
+  if (!code.includes(selector)) {
+    console.log('  ⚠️ disperseToken NOT FOUND — wrong contract. Every batch would revert on an');
+    console.log('     unknown selector. The Disperse.sol in pons-launcher is native-ETH only');
+    console.log('     and is the usual mistake here.');
+    return;
+  }
+  console.log('  disperseToken: ✓ present');
+
+  try {
+    const allowance = await erc20(config.rewardTokenAddress).allowance(
+      walletAddress(),
+      config.disperseAddress
+    );
+    console.log(
+      `  SPCX allowed : ${allowance === 0n ? '0 — the bot approves it on the first airdrop' : formatUnits(allowance, config.rewardDecimals)}`
+    );
+  } catch (_err) {
+    console.log('  SPCX allowed : (could not read)');
+  }
+}
+
 async function main() {
   hr('CONFIG');
   console.log(`  token      : ${config.tokenSymbol} ${config.tokenAddress || '(TOKEN_ADDRESS not set)'}`);
@@ -130,6 +186,7 @@ async function main() {
     console.log('  TOKEN_ADDRESS is blank — /stats answers null for every field and');
     console.log('  /rewards an empty page. That is the correct pre-launch state: the site');
     console.log('  hides the tiles and shows an empty feed.');
+    await disperserSection();
     await db.close();
     return;
   }
@@ -192,6 +249,7 @@ async function main() {
   }
 
   await botSection(quote.status === 'fulfilled' ? quote.value.priceUsd : null);
+  await disperserSection();
 
   hr('GET /stats would answer');
   console.log(
