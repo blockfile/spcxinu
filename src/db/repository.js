@@ -292,9 +292,38 @@ async function getDistributionState() {
   return db.collection('state').findOne({ _id: 'distribution' }, { projection: { _id: 0 } });
 }
 
+/**
+ * Tokens this bot bought to burn but could not burn.
+ *
+ * Carried forward so a failed burn is retried on the next cycle instead of
+ * sitting in the wallet forever. Tracked as a NUMBER OF TOKENS THE BOT BOUGHT,
+ * never as "whatever the wallet holds": the signing wallet is also the dev
+ * wallet and may hold SPACEINU personally, which must never be burned.
+ */
+async function setPendingBurn(raw) {
+  const db = getDb();
+  await db.collection('state').updateOne(
+    { _id: 'burn' },
+    { $set: { pendingRaw: String(raw), at: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+
+async function getPendingBurn() {
+  const db = getDb();
+  const doc = await db.collection('state').findOne({ _id: 'burn' });
+  try {
+    return BigInt((doc && doc.pendingRaw) || '0');
+  } catch (_err) {
+    return 0n;
+  }
+}
+
 module.exports = {
   createCycle,
   setDistributionState,
+  setPendingBurn,
+  getPendingBurn,
   getDistributionState,
   finishCycle,
   addStep,

@@ -32,8 +32,10 @@ const { swapExactInSingle } = require('./v4router');
 const { quoteCurveOut, buyOnCurve } = require('./curve');
 const { sendTx } = require('./send');
 const { toUnitString } = require('./units');
+const repo = require('../db/repository');
 
 const BUY_ATTEMPTS = 3;
+const BURN_ATTEMPTS = 3;
 const BPS = 10000n;
 
 function fakeSig(prefix) {
@@ -136,12 +138,30 @@ async function buyToken({ launch, quoteAmountRaw }) {
   throw lastErr;
 }
 
-/** Burn `raw` base units of the launch token held by this wallet. */
+/**
+ * Burn `raw` base units of the launch token held by this wallet.
+ *
+ * Retried like the buy is. A live cycle bought 626,015 tokens and then lost
+ * them to a single "could not coalesce error" — an ethers-level RPC hiccup, not
+ * a revert; the same burn simulated fine moments later. Giving the buy three
+ * attempts and the burn none meant one blip stranded everything it had just
+ * bought.
+ */
 async function burnToken({ token, raw }) {
-  const tx = await sendTx(() => new Contract(token, ERC20_ABI, wallet).burn(raw));
-  await tx.wait();
-  console.log(`[tx] burn ${raw} of ${token}: ${tx.hash}`);
-  return tx.hash;
+  let lastErr;
+  for (let attempt = 1; attempt <= BURN_ATTEMPTS; attempt += 1) {
+    try {
+      const tx = await sendTx(() => new Contract(token, ERC20_ABI, wallet).burn(raw));
+      await tx.wait();
+      console.log(`[tx] burn ${raw} of ${token}: ${tx.hash}`);
+      return tx.hash;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[buyback] burn attempt ${attempt}/${BURN_ATTEMPTS} failed: ${err.shortMessage || err.message}`);
+      if (attempt < BURN_ATTEMPTS) await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -224,20 +244,40 @@ async function buybackAndBurn({ launch, quoteAmount }) {
   const decimals = await getDecimals(launch.token);
   const tokensBought = Number(formatUnits(buy.boughtRaw, decimals));
 
+  // Add anything a previous cycle bought but failed to burn. Tracked as tokens
+  // THIS BOT BOUGHT, never as "whatever the wallet holds": the signing wallet
+  // is also the dev wallet and may hold the token personally, which must never
+  // be burned. Without this, a failed burn stranded 626,015 tokens permanently,
+  // because the next cycle only ever burns what it just bought.
+  let pending = 0n;
+  try {
+    pending = await repo.getPendingBurn();
+  } catch (_err) {
+    pending = 0n;
+  }
+  const burnRaw = buy.boughtRaw + pending;
+  if (pending > 0n) {
+    console.log(`[buyback] also burning ${formatUnits(pending, decimals)} carried over from an earlier failed burn`);
+  }
+
   // The buy succeeded — from here the tokens are ours either way, so a failed
   // burn is reported without discarding the fact that the buy landed.
   try {
-    const burnSignature = await burnToken({ token: launch.token, raw: buy.boughtRaw });
+    const burnSignature = await burnToken({ token: launch.token, raw: burnRaw });
+    await repo.setPendingBurn(0n).catch(() => {});
     return {
       ...base,
       bought: true,
       burned: true,
-      tokensBought,
+      tokensBought: Number(formatUnits(burnRaw, decimals)),
       buySignature: buy.signature,
       burnSignature,
       venue: buy.venue,
     };
   } catch (err) {
+    // Remember what is owed, so the next cycle burns it too rather than
+    // leaving it in the wallet forever.
+    await repo.setPendingBurn(burnRaw).catch(() => {});
     return {
       ...base,
       bought: true,
@@ -252,5 +292,5 @@ async function buybackAndBurn({ launch, quoteAmount }) {
 
 module.exports = {
   buybackAndBurn, buyToken, burnToken, applySlippage, describeOutcome,
-  clampToBalance, BUY_ATTEMPTS,
+  clampToBalance, BUY_ATTEMPTS, BURN_ATTEMPTS,
 };
