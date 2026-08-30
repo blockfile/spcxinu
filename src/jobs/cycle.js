@@ -92,10 +92,31 @@ function feeRecipientWarning(launch, address) {
 }
 
 // Last observed result of the check above, so the operator API can report it
-// without making a chain call of its own. null until the first cycle runs.
+// without making a chain call of its own. null until something has looked.
 let lastFeeRecipientCheck = null;
 function getFeeRecipientCheck() {
   return lastFeeRecipientCheck;
+}
+
+/**
+ * Record the fee-recipient verdict from a launch record someone has already
+ * read. Returns the warning, or null when it is fine.
+ *
+ * Called by the CYCLE and also by every scheduler poll. The poll already
+ * fetches the launch record to price what is claimable, so re-using it makes
+ * the single most important operational flag as fresh as the poll interval
+ * instead of only as fresh as the last cycle — which, on a quiet token, could
+ * be hours of reporting `null` about the one thing worth knowing.
+ */
+function recordFeeRecipientCheck(launch, address) {
+  const warning = feeRecipientWarning(launch, address);
+  lastFeeRecipientCheck = {
+    ok: warning === null,
+    expected: address,
+    actual: (launch && launch.creatorFeeRecipient) || null,
+    at: new Date().toISOString(),
+  };
+  return warning;
 }
 
 /**
@@ -208,14 +229,7 @@ async function runCycle() {
 
     // The one thing that must not be wrong. Warn, never throw: an operator may
     // be mid-migration, and the cycle below still reports what it finds.
-    const walletAddress = config.wallet.address;
-    const feeWarning = feeRecipientWarning(launch, walletAddress);
-    lastFeeRecipientCheck = {
-      ok: feeWarning === null,
-      expected: walletAddress,
-      actual: launch.creatorFeeRecipient || null,
-      at: new Date().toISOString(),
-    };
+    const feeWarning = recordFeeRecipientCheck(launch, config.wallet.address);
     if (feeWarning) console.warn(`[cycle ${id}] ⚠️  ${feeWarning}`);
 
     // 1. Sweep pending fees into the escrow. Never fatal.
@@ -371,4 +385,5 @@ module.exports = {
   isFeeRecipientOk,
   feeRecipientWarning,
   getFeeRecipientCheck,
+  recordFeeRecipientCheck,
 };

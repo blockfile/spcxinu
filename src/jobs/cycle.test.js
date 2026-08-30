@@ -126,3 +126,33 @@ test('a skipped reward leg completes and carries its reason', () => {
   assert.strictEqual(out.status, 'complete');
   assert.match(out.note, /zero/);
 });
+
+test('recording the fee-recipient check makes it readable without a cycle', () => {
+  // The flag used to be set only inside runCycle, so between cycles the most
+  // important operational signal reported null — on a quiet token, for hours.
+  const { recordFeeRecipientCheck, getFeeRecipientCheck } = require('./cycle');
+
+  const warning = recordFeeRecipientCheck(
+    { creatorFeeRecipient: '0xAAA0000000000000000000000000000000000001' },
+    '0xaaa0000000000000000000000000000000000001'
+  );
+  assert.strictEqual(warning, null, 'a matching recipient produces no warning');
+
+  const check = getFeeRecipientCheck();
+  assert.strictEqual(check.ok, true);
+  assert.strictEqual(check.actual, '0xAAA0000000000000000000000000000000000001');
+  assert.ok(typeof check.at === 'string');
+});
+
+test('a mismatch is recorded as ok:false with the address actually paid', () => {
+  const { recordFeeRecipientCheck, getFeeRecipientCheck } = require('./cycle');
+  const warning = recordFeeRecipientCheck(
+    { creatorFeeRecipient: '0xdistributor' },
+    '0xus'
+  );
+  assert.match(warning, /MISMATCH/);
+  const check = getFeeRecipientCheck();
+  assert.strictEqual(check.ok, false);
+  assert.strictEqual(check.actual, '0xdistributor');
+  assert.strictEqual(check.expected, '0xus');
+});

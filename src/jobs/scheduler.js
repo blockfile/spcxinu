@@ -9,7 +9,7 @@
 
 const cron = require('node-cron');
 const config = require('../config');
-const { runCycle } = require('./cycle');
+const { runCycle, recordFeeRecipientCheck } = require('./cycle');
 const { getLaunch } = require('../evm/launch');
 const { escrowBalanceQuote } = require('../evm/escrow');
 const { sweepableQuote } = require('../evm/sweep');
@@ -49,6 +49,10 @@ async function getClaimableQuote(deps = {}) {
   if (!token) return 0;
   const launch = await readLaunch();
   state.lastPhase = launch.graduated ? 'v4' : 'curve';
+  // Free: the launch record is already in hand, so the fee-recipient verdict
+  // stays as fresh as the poll rather than as stale as the last cycle.
+  const warning = recordFeeRecipientCheck(launch, config.wallet.address);
+  if (warning) console.warn(`[scheduler] ⚠️  ${warning}`);
   const [inEscrow, pending] = await Promise.all([readEscrow(), readSweepable(launch)]);
   return inEscrow + pending;
 }
