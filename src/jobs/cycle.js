@@ -5,13 +5,15 @@
 //   sweep pending fees into the escrow   (best-effort — may need pons's operator)
 //   claimToken(SPCX)                     -> SPCX in the wallet
 //     -> REWARD_PCT: airdrop pro-rata to SPACEINU holders
+//     -> BURN_PCT:   buy SPACEINU with it and burn what was bought
 //     -> remainder:  the dev cut — forwarded to DEV_PAYOUT_ADDRESS if one is
-//                    set, otherwise left in the wallet
+//                    set, otherwise left in the wallet. At the default 80/20
+//                    it is zero.
 //
-// There is NO buy leg. SPACEINU is quoted in SPCX, so the creator fees arrive
-// already denominated in the asset holders are paid in — nothing is ever
-// swapped, which removes slippage, quoting and the whole class of "bought the
-// reward but failed to hand it out" failures.
+// The REWARD leg never swaps: fees arrive already denominated in SPCX, which is
+// what holders are paid. The BUYBACK leg is the only thing in this bot that
+// trades, which is why slippage, quoting and venue dispatch live entirely in
+// evm/buyback.js and touch nothing else.
 //
 // Each step is recorded as it completes; a thrown step fails the cycle without
 // crashing the process.
@@ -29,16 +31,30 @@ const { computeWeightedAllocations } = require('../services/distribution');
 const { airdropToken } = require('../evm/airdrop');
 const { toUnitString } = require('../evm/units');
 const { sendDevPayout, describeOutcome: describeDevPayout } = require('../evm/devpayout');
+const { buybackAndBurn, describeOutcome: describeBuyback } = require('../evm/buyback');
 const { provider } = require('../evm/provider');
 
 /**
- * Split a claim into its two legs. Pure, so the invariant that the legs re-add
- * to the claim is directly testable.
+ * Split a claim three ways. Pure, so the invariant that the legs re-add to the
+ * claim is directly testable.
+ *
+ * The dev cut is the REMAINDER rather than its own percentage, so the three can
+ * never disagree with the claim: at the default 80/20 it is exactly zero, and it
+ * only appears when REWARD_PCT + BURN_PCT total under 100.
  */
 function splitClaim(claimedQuote) {
-  const rewardQuote = +(claimedQuote * (config.rewardPct / 100)).toFixed(9);
-  const devQuote = +(claimedQuote - rewardQuote).toFixed(9);
-  return { rewardQuote, devQuote };
+  // Round to 9 places and normalise negative zero. At 80/20 the remainder is
+  // 1 - 0.8 - 0.2 = -1.1e-16, which toFixed renders as "-0.000000000" and `+`
+  // turns into -0: a value that fails a strict comparison with 0 and prints as
+  // "-0" in the cycle log.
+  const round = (n) => {
+    const r = +n.toFixed(9);
+    return r === 0 ? 0 : r;
+  };
+  const rewardQuote = round(claimedQuote * (config.rewardPct / 100));
+  const burnQuote = round(claimedQuote * (config.burnPct / 100));
+  const devQuote = round(claimedQuote - rewardQuote - burnQuote);
+  return { rewardQuote, burnQuote, devQuote };
 }
 
 /**
@@ -232,8 +248,11 @@ async function runCycle() {
     }
 
     // 3. Split.
-    const { rewardQuote, devQuote } = splitClaim(claimed);
-    log(`split: ${rewardQuote} SPCX to holders (${config.rewardPct}%), keep ${devQuote} for dev`);
+    const { rewardQuote, burnQuote, devQuote } = splitClaim(claimed);
+    log(
+      `split: ${rewardQuote} to holders (${config.rewardPct}%), ` +
+        `${burnQuote} to buyback+burn (${config.burnPct}%), ${devQuote} to dev (${config.devPct}%)`
+    );
 
     // 4. Reward leg — airdrop the claimed SPCX directly. Nothing is bought.
     let reward = { skipped: false, sent: 0, failed: 0, recipients: 0, eligibleHolders: 0, totalHolders: 0 };
@@ -246,7 +265,30 @@ async function runCycle() {
       log(`reward leg skipped: ${reason}`);
     }
 
-    // 5. Forward the dev cut to the cold address, if one is configured.
+    // 5. Buy SPACEINU with the burn share and destroy it. Non-fatal: the
+    //    holders have already been paid, so a failed swap leaves the SPCX in
+    //    the wallet to retry next cycle rather than losing the whole cycle.
+    const buyback = await buybackAndBurn({ launch, quoteAmount: burnQuote });
+    await repo.addStep({
+      cycleId: id,
+      name: 'buyback',
+      status: buyback.burned ? 'ok' : buyback.skipped ? 'skipped' : 'failed',
+      signature: buyback.burnSignature || buyback.buySignature,
+      detail: {
+        quoteSpent: buyback.skipped ? 0 : burnQuote,
+        tokensBought: buyback.tokensBought,
+        bought: buyback.bought,
+        burned: buyback.burned,
+        venue: buyback.venue ?? null,
+        buySignature: buyback.buySignature,
+        burnSignature: buyback.burnSignature,
+        reason: buyback.reason ?? null,
+        error: buyback.error ?? null,
+      },
+    });
+    log(describeBuyback(buyback));
+
+    // 6. Forward the dev cut to the cold address, if one is configured.
     //    Recorded as its own step, never as an airdrop: it is not a holder
     //    reward, and logging it as one would publish it in the public feed and
     //    inflate totalRewarded. Non-fatal — the holders have already been paid,
@@ -273,6 +315,8 @@ async function runCycle() {
       phase,
       quote_claimed: claimed,
       quote_distributed: reward.skipped ? 0 : rewardQuote,
+      quote_burned: buyback.burned ? burnQuote : 0,
+      tokens_burned: buyback.burned ? buyback.tokensBought : 0,
       eligible_holders: reward.eligibleHolders,
       total_holders: reward.totalHolders,
       sweep_skipped: sweep.skipped ? 1 : 0,

@@ -87,6 +87,21 @@ const ERC20_ABI = [
   'function transfer(address to, uint256 value) returns (bool)',
   'function approve(address spender, uint256 value) returns (bool)',
   'function allowance(address owner, address spender) view returns (uint256)',
+  // pons v2 tokens expose a real burn. Verified against a live launch: calling
+  // it reverts with ERC20InsufficientBalance rather than an unknown selector,
+  // so the function exists. Burning REDUCES totalSupply, which a transfer to a
+  // dead address does not — holders can see the supply shrink on the explorer.
+  'function burn(uint256 value)',
+];
+
+// Permit2. The v4 UniversalRouter pulls ERC-20 inputs through Permit2 rather
+// than a direct allowance, so paying with SPCX needs two approvals: a one-time
+// ERC-20 approve of SPCX to Permit2, then a Permit2 allowance naming the router
+// as spender. Native ETH needed neither, which is why this did not exist while
+// the bot only ever spent ETH.
+const PERMIT2_ABI = [
+  'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
+  'function approve(address token, address spender, uint160 amount, uint48 expiration)',
 ];
 
 const UNIVERSAL_ROUTER_ABI = [
@@ -111,5 +126,5 @@ const DISPERSE_ABI = [
 module.exports = {
   POOL_KEY_TYPE, EXACT_IN_SINGLE_TYPE, QUOTE_SINGLE_TYPE,
   FACTORY_V2_ABI, CURVE_ABI, HOOK_ABI, ESCROW_ABI, ERC20_ABI,
-  UNIVERSAL_ROUTER_ABI, V4_QUOTER_ABI, STATE_VIEW_ABI, DISPERSE_ABI,
+  UNIVERSAL_ROUTER_ABI, V4_QUOTER_ABI, STATE_VIEW_ABI, DISPERSE_ABI, PERMIT2_ABI,
 };

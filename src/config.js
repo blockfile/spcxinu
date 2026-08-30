@@ -62,13 +62,26 @@ if (devPayoutAddress && !isAddress(devPayoutAddress)) {
   throw new Error(`DEV_PAYOUT_ADDRESS is not a valid address: ${process.env.DEV_PAYOUT_ADDRESS}`);
 }
 
+// The claim splits three ways. REWARD_PCT and BURN_PCT are configured; the dev
+// cut is whatever is left, so it only exists when the other two total under 100.
+// At the default 80/20 there is no dev cut at all — every SPCX collected goes
+// back to holders or into the buyback.
 const rewardPct = num(process.env.REWARD_PCT, 80);
+const burnPct = num(process.env.BURN_PCT, 20);
 if (!(rewardPct >= 0 && rewardPct <= 100)) {
   throw new Error(`invalid split: REWARD_PCT(${rewardPct}) must be within [0, 100]`);
 }
-// The dev cut is the remainder. toFixed(6) keeps a fractional share from
-// leaving float dust behind (100 - 80.1 is 19.900000000000006 in FP).
-const devPct = +(100 - rewardPct).toFixed(6);
+if (!(burnPct >= 0 && burnPct <= 100)) {
+  throw new Error(`invalid split: BURN_PCT(${burnPct}) must be within [0, 100]`);
+}
+if (rewardPct + burnPct > 100) {
+  throw new Error(
+    `invalid split: REWARD_PCT(${rewardPct}) + BURN_PCT(${burnPct}) = ${rewardPct + burnPct} exceeds 100`
+  );
+}
+// toFixed(6) keeps a fractional share from leaving float dust behind
+// (100 - 80.1 is 19.900000000000006 in FP).
+const devPct = +(100 - rewardPct - burnPct).toFixed(6);
 
 // Accumulation is the default: this launch's fees are worth hundreds of dollars
 // per token, so firing on every tick would pay gas to move dust.
@@ -148,7 +161,15 @@ const config = {
 
   // ── Bot: split and eligibility ─────────────────────────────────────────────
   rewardPct,
+  burnPct,
   devPct,
+  // Slippage tolerance for the buyback swap, percent. Back in play now that the
+  // bot buys again — the reward leg still never swaps.
+  slippagePct: num(process.env.SLIPPAGE_PCT, 5),
+  // Uniswap v4 periphery, needed only by the buyback swap.
+  universalRouter: lowerOr(process.env.UNIVERSAL_ROUTER, '0x8876789976decbfcbbbe364623c63652db8c0904'),
+  v4Quoter: lowerOr(process.env.V4_QUOTER, '0x5c3db48cfd8352d845fac70009d714f0ce1d7914'),
+  permit2: lowerOr(process.env.PERMIT2, '0x000000000022d473030f116ddee9f6b43ac78ba3'),
   minHold: num(process.env.MIN_HOLD, 100000),
   rewardCapPct: num(process.env.REWARD_CAP_PCT, 0),
   clusters: parseClusters(process.env.CLUSTERS),

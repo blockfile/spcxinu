@@ -25,10 +25,13 @@ async function createCycle({ dryRun }) {
     started_at: new Date().toISOString(),
     finished_at: null,
     phase: null,
-    // Amounts are SPCX, the launch's quote asset — there is no ETH in this
-    // flow and nothing is ever bought, so no *_eth or *_bought columns.
+    // Quote amounts are SPCX, the launch's quote asset — there is no ETH in
+    // this flow, so no *_eth columns. tokens_burned is SPACEINU: the only
+    // thing the bot ever buys, and it is destroyed in the same cycle.
     quote_claimed: null,
     quote_distributed: null,
+    quote_burned: null,
+    tokens_burned: null,
     sweep_skipped: 0,
     sweep_reason: null,
     dry_run: dryRun ? 1 : 0,
@@ -43,6 +46,7 @@ async function finishCycle(id, fields) {
   const db = getDb();
   const allowed = [
     'status', 'mode', 'phase', 'quote_claimed', 'quote_distributed',
+    'quote_burned', 'tokens_burned',
     'eligible_holders', 'total_holders',
     'sweep_skipped', 'sweep_reason',
     'note', 'error',

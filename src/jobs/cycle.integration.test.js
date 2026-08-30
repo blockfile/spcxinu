@@ -8,6 +8,7 @@
 
 process.env.DRY_RUN = 'true';
 process.env.REWARD_PCT = '80';
+process.env.BURN_PCT = '20';
 process.env.TOKEN_ADDRESS = '0x50d0d0da00ffd195d2d1d2448617ad039855ad2b';
 process.env.TOKEN_SYMBOL = 'SPACEINU';
 process.env.TOKEN_DECIMALS = '18';
@@ -60,13 +61,57 @@ test('a funded vault claims, splits and airdrops to holders', async () => {
   assert.strictEqual(cycle.status, 'complete', cycle.error || '');
   assert.strictEqual(cycle.quote_claimed, 10);
   assert.strictEqual(cycle.quote_distributed, 8, '80% goes to holders');
+  assert.strictEqual(cycle.quote_burned, 2, '20% goes to the buyback');
 
   const names = cycle.steps.map((s) => s.name);
-  assert.deepStrictEqual(names, ['sweep', 'claim', 'airdrop', 'dev'], 'no buy step exists in this bot');
+  assert.deepStrictEqual(names, ['sweep', 'claim', 'airdrop', 'buyback', 'dev']);
 
   const airdropStep = cycle.steps.find((s) => s.name === 'airdrop');
   assert.strictEqual(airdropStep.status, 'ok');
   assert.ok(airdropStep.detail.sent > 0, 'the simulated holders were paid');
+});
+
+test('the buyback buys SPACEINU with the burn share and destroys it', async () => {
+  simvault.reset(10);
+  const cycle = await runCycle();
+
+  const buyback = cycle.steps.find((s) => s.name === 'buyback');
+  assert.strictEqual(buyback.status, 'ok');
+  assert.strictEqual(buyback.detail.quoteSpent, 2, '20% of a 10 SPCX claim');
+  assert.strictEqual(buyback.detail.bought, true);
+  assert.strictEqual(buyback.detail.burned, true);
+  assert.ok(buyback.detail.tokensBought > 0);
+  assert.ok(cycle.tokens_burned > 0, 'the burned amount is recorded on the cycle');
+});
+
+test('the buyback is NOT a holder payout and never reaches the rewards feed', async () => {
+  simvault.reset(10);
+  const cycle = await runCycle();
+  const air = await db.getDb().collection('airdrops').find({ cycle_id: cycle.id }).toArray();
+  const paid = air.reduce((s, r) => s + (r.amount_ui || 0), 0);
+  assert.ok(Math.abs(paid - 8) < 1e-9, 'holders got the 80%, with the burn share excluded');
+});
+
+test('with BURN_PCT=0 the buyback is skipped and holders take everything', async () => {
+  process.env.REWARD_PCT = '100';
+  process.env.BURN_PCT = '0';
+  for (const m of ['../config', '../evm/buyback', '../evm/devpayout', './cycle']) {
+    delete require.cache[require.resolve(m)];
+  }
+  const { runCycle: run } = require('./cycle');
+
+  simvault.reset(10);
+  const cycle = await run();
+  const buyback = cycle.steps.find((s) => s.name === 'buyback');
+  assert.strictEqual(buyback.status, 'skipped');
+  assert.strictEqual(cycle.quote_distributed, 10, 'all of it to holders');
+  assert.strictEqual(cycle.status, 'complete');
+
+  process.env.REWARD_PCT = '80';
+  process.env.BURN_PCT = '20';
+  for (const m of ['../config', '../evm/buyback', '../evm/devpayout', './cycle']) {
+    delete require.cache[require.resolve(m)];
+  }
 });
 
 test('with no DEV_PAYOUT_ADDRESS the dev cut is skipped, not failed', async () => {
@@ -78,9 +123,15 @@ test('with no DEV_PAYOUT_ADDRESS the dev cut is skipped, not failed', async () =
   assert.strictEqual(cycle.status, 'complete', 'an unconfigured dev payout must not fail the cycle');
 });
 
-test('with DEV_PAYOUT_ADDRESS set, the dev cut is forwarded and stays out of the public feed', async () => {
+test('at 70/20 the dev remainder is forwarded, and stays out of the public feed', async () => {
+  // A dev cut only exists when REWARD_PCT + BURN_PCT falls under 100, so this
+  // case needs a split that leaves one — at the default 80/20 there is nothing
+  // to forward, which the preceding test covers.
+  process.env.REWARD_PCT = '70';
+  process.env.BURN_PCT = '20';
   process.env.DEV_PAYOUT_ADDRESS = '0xC8f686977655879f741f9AA693432081210774EF';
-  for (const m of ['../config', '../evm/devpayout', './cycle']) delete require.cache[require.resolve(m)];
+  const RELOAD = ['../config', '../evm/buyback', '../evm/devpayout', './cycle'];
+  for (const m of RELOAD) delete require.cache[require.resolve(m)];
   const { runCycle: run } = require('./cycle');
 
   simvault.reset(10);
@@ -88,7 +139,7 @@ test('with DEV_PAYOUT_ADDRESS set, the dev cut is forwarded and stays out of the
 
   const dev = cycle.steps.find((s) => s.name === 'dev');
   assert.strictEqual(dev.status, 'ok');
-  assert.strictEqual(dev.detail.amount, 2, '20% of a 10 SPCX claim');
+  assert.strictEqual(dev.detail.amount, 1, 'the 10% remainder of a 10 SPCX claim');
   assert.strictEqual(dev.detail.to, '0xc8f686977655879f741f9aa693432081210774ef');
 
   // The dev cut must never be recorded as a holder payout: it is not a reward,
@@ -99,10 +150,13 @@ test('with DEV_PAYOUT_ADDRESS set, the dev cut is forwarded and stays out of the
     'the dev address must not appear in the airdrop ledger'
   );
   const paid = air.reduce((s, r) => s + (r.amount_ui || 0), 0);
-  assert.ok(Math.abs(paid - 8) < 1e-9, 'holders were paid exactly the 80%, with the dev cut excluded');
+  assert.ok(Math.abs(paid - 7) < 1e-9, 'holders were paid exactly the 70%');
+  assert.strictEqual(cycle.quote_burned, 2, 'and the buyback still took its 20%');
 
+  process.env.REWARD_PCT = '80';
+  process.env.BURN_PCT = '20';
   process.env.DEV_PAYOUT_ADDRESS = '';
-  for (const m of ['../config', '../evm/devpayout', './cycle']) delete require.cache[require.resolve(m)];
+  for (const m of RELOAD) delete require.cache[require.resolve(m)];
 });
 
 test('the vault is drained by the claim, so the next cycle finds nothing', async () => {

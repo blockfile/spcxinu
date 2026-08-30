@@ -4,20 +4,26 @@
 
 SPACEINU launches on the Pons V2 launchpad **paired with SPCX** (tokenized
 SpaceX stock). Because pons pays creator fees in whatever a launch is priced in,
-those fees accrue **as SPCX** — never as ETH. This repo claims them and airdrops
-them pro-rata to SPACEINU holders, then reports what it did to the site.
+those fees accrue **as SPCX** — never as ETH. This repo claims them, airdrops
+most of them pro-rata to SPACEINU holders, spends the rest buying SPACEINU and
+burning it, and reports what it did to the site.
 
 ```
 SPACEINU trades  →  creator fees accrue on-chain, denominated in SPCX
       ↓  sweep              push pending fees into the pons fee escrow
       ↓  claimToken(SPCX)   withdraw the escrow → the bot's wallet
       ├─ 80% → airdrop SPCX pro-rata to SPACEINU holders
-      └─ 20% → dev cut → forwarded to DEV_PAYOUT_ADDRESS (a cold wallet)
+      ├─ 20% → buy SPACEINU with it, then BURN what was bought
+      └─  0% → dev cut: whatever the other two leave (none at 80/20)
 ```
 
-**Nothing is ever bought.** The reward asset arrives as the fee asset, so there
-is no swap, no quoter, no slippage, and no way to buy a reward and then fail to
-hand it out.
+**The reward leg never swaps.** Fees arrive already denominated in SPCX, which
+is exactly what holders are paid — so slippage, quoting and venue dispatch exist
+only for the buyback, and a bad swap can never strand a holder payout.
+
+**The burn is a real burn.** `burn(uint256)` on the token, which reduces
+`totalSupply` — not a transfer to a dead address. Holders can watch the supply
+shrink on the explorer, and burned tokens leave the holder set entirely.
 
 ## Two processes, one database
 
@@ -69,9 +75,10 @@ perfectly good feature — Ryzen Kitty uses it — but **it is mutually exclusiv
 with this bot**, because switching it on reassigns `creatorFeeRecipient` to that
 distributor contract and leaves the bot with nothing to claim.
 
-Use the toggle if you want 100% to holders on pons's schedule. Use this bot if
-you want a dev cut, a `MIN_HOLD` threshold, anti-sybil cluster caps, exclusions,
-and your own trigger.
+Use the toggle if you want 100% to holders on pons's schedule and nothing else.
+Use this bot if you want any of what the toggle cannot do: a **buyback and
+burn**, a `MIN_HOLD` eligibility threshold, anti-sybil cluster caps, exclusions,
+a dev cut, or your own trigger.
 
 ## Two wallets, and why
 
@@ -104,9 +111,10 @@ future cycle.
 
 ## Gas is not self-funding
 
-The dev cut is SPCX; gas is ETH. Unlike an ETH-quoted launch, **the wallet cannot
-refill its own gas from what it collects** — it needs an independently
-topped-up ETH balance, and a few hundred transfers per cycle steadily drain it.
+Everything the bot collects is SPCX; gas is ETH. Unlike an ETH-quoted launch,
+**the wallet cannot refill its own gas from what it collects** — it needs an
+independently topped-up ETH balance, and a cycle's airdrop transfers plus the
+buyback swap steadily drain it.
 
 `GAS_RESERVE_ETH` guards this: below it, a cycle refuses to *start*, rather than
 claiming the escrow and then failing to pay anyone out.
@@ -175,7 +183,9 @@ Everything is documented in `.env.example`. The ones worth knowing first:
 | `TOKEN_ADDRESS` | — | blank until launch → every stat is null |
 | `REWARD_TOKEN_ADDRESS` | SPCX | the quote asset **and** the reward asset — one address, both roles |
 | `CLAIM_EVERY_USD` | `100` | fire once the accrued SPCX is worth this |
-| `REWARD_PCT` | `80` | share to holders; the rest is the dev cut |
+| `REWARD_PCT` | `80` | share airdropped to holders |
+| `BURN_PCT` | `20` | share used to buy SPACEINU and burn it |
+| `SLIPPAGE_PCT` | `5` | tolerance on the buyback swap only |
 | `DEV_PAYOUT_ADDRESS` | — | cold address the dev cut is forwarded to; blank = it stays in the bot wallet |
 | `MIN_HOLD` | `100000` | minimum SPACEINU balance to qualify |
 | `REWARD_CAP_PCT` | `0` | per-wallet weight cap, % of supply (0 = pure pro-rata) |
