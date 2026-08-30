@@ -60,9 +60,43 @@ function hookAt(runner = provider) {
   return new Contract(config.memeHook, HOOK_ABI, runner);
 }
 
-/** Fees sitting unswept that would land in the escrow as ours. */
-async function sweepableRaw(launch) {
+/**
+ * Can WE sweep this pool right now, or does it need pons's trusted operator?
+ *
+ * Transcribed from V2MemeHook._requiresTrustedOperator: any memecoin-
+ * denominated pending fee or creator tax, or a pending buyback in the quote,
+ * locks the sweep to the operator — because clearing it needs an internal swap
+ * whose slippage bound only pons may choose.
+ *
+ * This matters far more after graduation than before. On the hook, a BUY takes
+ * its fee in the unspecified currency, which for a buy IS the memecoin — so on
+ * an actively traded token there is nearly always memecoin-denominated pending,
+ * and the creator can essentially never sweep. Those fees are not lost; pons's
+ * operator sweeps them into the escrow, and the next cycle claims them.
+ */
+async function sweepBlockedByOperator(launch, hook = null) {
+  if (!launch.graduated) return false;
+  const h = hook || hookAt();
+  const quote = launch.pairToken || NATIVE;
+  const [feeInMeme, taxInMeme, buybackInQuote] = await Promise.all([
+    h.pendingFees(launch.poolId, launch.token),
+    h.pendingCreatorTax(launch.poolId, launch.token),
+    h.pendingBuyback(launch.poolId, quote),
+  ]);
+  return feeInMeme > 0n || taxInMeme > 0n || buybackInQuote > 0n;
+}
+
+/**
+ * Fees sitting unswept that WE could actually move into the escrow.
+ *
+ * Zero when the sweep is locked to pons's operator. Reporting the pending
+ * amount there would be worse than useless: it is what the trigger measures, so
+ * the bot fired every single minute on money it could not reach, swept nothing,
+ * claimed nothing, and reset the site's gauge to zero on each pass.
+ */
+async function sweepableRaw(launch, hook = null) {
   if (config.dryRun) return 0n; // the sim vault models the escrow directly
+  if (await sweepBlockedByOperator(launch, hook)) return 0n;
 
   if (!launch.graduated) {
     const c = curveAt(launch.curve);
@@ -74,7 +108,7 @@ async function sweepableRaw(launch) {
     return bucket - earmark + tax;
   }
 
-  const h = hookAt();
+  const h = hook || hookAt();
   const quote = launch.pairToken || NATIVE;
   const [info, pending, tax, buyback] = await Promise.all([
     h.launches(launch.poolId),
@@ -124,6 +158,15 @@ async function sweepFees(launch) {
     return { swept: false, skipped: true, reason, signature: null };
   }
 
+  if (await sweepBlockedByOperator(launch)) {
+    const reason =
+      "pons's trusted operator must sweep this pool — memecoin-denominated fees " +
+      'need an internal swap. They are not lost: the operator moves them to the ' +
+      'escrow and the next cycle claims them.';
+    console.warn(`[sweep] ${reason}`);
+    return { swept: false, skipped: true, reason, signature: null };
+  }
+
   const pending = await sweepableRaw(launch);
   if (pending <= 0n) {
     return { swept: false, skipped: true, reason: 'nothing pending to sweep', signature: null };
@@ -146,4 +189,7 @@ async function sweepFees(launch) {
   }
 }
 
-module.exports = { creatorShareRaw, isOperatorOnlyError, sweepableRaw, sweepableQuote, sweepFees };
+module.exports = {
+  creatorShareRaw, isOperatorOnlyError, sweepableRaw, sweepableQuote,
+  sweepFees, sweepBlockedByOperator,
+};

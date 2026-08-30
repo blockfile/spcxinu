@@ -95,3 +95,53 @@ test('a buyback-enabled launch skips the sweep instead of throwing', async () =>
   process.env.WALLET_PRIVATE_KEY = '';
   for (const m of ['../config', './provider', './sweep']) delete require.cache[require.resolve(m)];
 });
+
+
+// ── fees we are not allowed to sweep must not look claimable ──────────────
+
+// A fake hook. Post-graduation the only reads that matter are the pending
+// ledgers, keyed [poolId][currency].
+function fakeHook({ feeMeme = 0n, taxMeme = 0n, buybackQuote = 0n, feeQuote = 0n, taxQuote = 0n } = {}) {
+  const MEME = '0xmeme';
+  return {
+    launches: async () => ({ registered: true, protocolFeeShareBps: 0n, buybackEnabled: false }),
+    pendingFees: async (_p, c) => (c === MEME ? feeMeme : feeQuote),
+    pendingCreatorTax: async (_p, c) => (c === MEME ? taxMeme : taxQuote),
+    pendingBuyback: async (_p, c) => (c === MEME ? 0n : buybackQuote),
+  };
+}
+const GRADUATED = { graduated: true, poolId: '0xpool', token: '0xmeme', pairToken: '0xquote' };
+
+test('memecoin-denominated fees lock the sweep to the trusted operator', async () => {
+  const { sweepBlockedByOperator } = require('./sweep');
+  assert.strictEqual(await sweepBlockedByOperator(GRADUATED, fakeHook({ feeMeme: 5n })), true);
+  assert.strictEqual(await sweepBlockedByOperator(GRADUATED, fakeHook({ taxMeme: 5n })), true);
+  assert.strictEqual(await sweepBlockedByOperator(GRADUATED, fakeHook({ buybackQuote: 5n })), true);
+  assert.strictEqual(await sweepBlockedByOperator(GRADUATED, fakeHook()), false);
+});
+
+test('a pre-graduation launch is never operator-locked', async () => {
+  const { sweepBlockedByOperator } = require('./sweep');
+  // Must not even read the hook — the curve has its own rule.
+  const explode = new Proxy({}, { get() { throw new Error('the hook must not be read pre-graduation'); } });
+  assert.strictEqual(await sweepBlockedByOperator({ graduated: false }, explode), false);
+});
+
+test('fees we CANNOT sweep report as 0 sweepable, not as their pending amount', async () => {
+  // This is what the accumulation trigger measures. Counting operator-locked
+  // fees made the bot fire every single minute on money it could not reach:
+  // it swept nothing, claimed 0, and reset the site's gauge to $0 each pass,
+  // for cycle after cycle. Sweepable means sweepable BY US.
+  process.env.DRY_RUN = 'false';
+  process.env.WALLET_PRIVATE_KEY = `0x${'1'.repeat(64)}`;
+  for (const m of ['../config', './provider', './sweep']) delete require.cache[require.resolve(m)];
+  const live = require('./sweep');
+
+  assert.strictEqual(await live.sweepableRaw(GRADUATED, fakeHook({ feeQuote: 900n, feeMeme: 1n })), 0n);
+  // ...and still reports the real amount once nothing is locked.
+  assert.strictEqual(await live.sweepableRaw(GRADUATED, fakeHook({ feeQuote: 900n })), 900n);
+
+  process.env.DRY_RUN = 'true';
+  process.env.WALLET_PRIVATE_KEY = '';
+  for (const m of ['../config', './provider', './sweep']) delete require.cache[require.resolve(m)];
+});

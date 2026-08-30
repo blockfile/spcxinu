@@ -24,7 +24,7 @@ const { getFeedPage } = require('../src/services/rewardsfeed');
 const { buildStats } = require('../src/routes/stats');
 const { getLaunch, describePhase } = require('../src/evm/launch');
 const { escrowBalanceQuote } = require('../src/evm/escrow');
-const { sweepableQuote } = require('../src/evm/sweep');
+const { sweepableQuote, sweepBlockedByOperator } = require('../src/evm/sweep');
 const { isFeeRecipientOk } = require('../src/jobs/cycle');
 const { provider, walletAddress } = require('../src/evm/provider');
 const { erc20 } = require('../src/evm/erc20');
@@ -70,16 +70,26 @@ async function botSection(quotePriceUsd) {
     }`
   );
 
-  const [inEscrow, pending, gasWei] = await Promise.all([
+  const [inEscrow, pending, gasWei, operatorLocked] = await Promise.all([
     escrowBalanceQuote(),
     sweepableQuote(launch).catch(() => 0),
     provider.getBalance(me).catch(() => null),
+    sweepBlockedByOperator(launch).catch(() => false),
   ]);
   const claimable = inEscrow + pending;
   const usd = typeof quotePriceUsd === 'number' ? claimable * quotePriceUsd : null;
 
   console.log(`  in escrow  : ${inEscrow} SPCX (claimable now)`);
-  console.log(`  unswept    : ${pending} SPCX (needs a sweep first)`);
+  if (operatorLocked) {
+    // sweepableQuote deliberately reports 0 here, because the trigger must not
+    // fire on money we cannot reach. Say so, rather than let a bare 0 read as
+    // "no fees are accruing".
+    console.log("  unswept    : locked — pons's operator must sweep this pool");
+    console.log('               (memecoin-denominated fees need an internal swap;');
+    console.log('                they reach the escrow when pons sweeps, then we claim)');
+  } else {
+    console.log(`  unswept    : ${pending} SPCX (needs a sweep first)`);
+  }
   console.log(
     `  total      : ${claimable} SPCX${usd === null ? '' : ` ≈ $${usd.toFixed(2)}`}` +
       (config.triggerMode === 'accumulation'
