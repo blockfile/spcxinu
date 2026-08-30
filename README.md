@@ -93,8 +93,26 @@ your earnings pile up.
 
 `DEV_PAYOUT_ADDRESS` takes an address, never a key: that wallet only ever
 receives, so its key can live in a hardware wallet and never touch the server.
-Each cycle forwards the dev cut there, so a compromised server costs you gas and
-at most one cycle's cut rather than every fee you have ever earned.
+Each cycle forwards the dev cut there, so a compromised server loses at most one
+cycle's cut in *balance* — rather than every fee you have ever collected.
+
+**But the bot wallet is not disposable.** Read the verified factory source:
+
+```solidity
+function transferCreatorFeeRecipient(address token, address newRecipient) external {
+    if (msg.sender != launch.creatorFeeRecipient) revert NotCreatorFeeRecipient();
+```
+
+Only the CURRENT recipient may reassign itself. The deployer cannot, and neither
+can you. So whoever holds this key can permanently redirect the entire future
+fee stream to an address of their choosing, and the balance left in the wallet
+is not what is at stake. The only override is the protocol owner's, behind a
+3-day timelock (`CREATOR_FEE_RECIPIENT_TIMELOCK`) — which means asking pons.
+
+Separating the wallets limits what is STORED on the server. It does not limit
+what is AUTHORISED there. Treat the box accordingly: `chmod 600 .env`, key-only
+SSH, nothing shared. `feeRecipientOk` on `GET /status` will not prevent a theft,
+but it turns "revenue quietly stopped" into a flag within one cycle.
 
 Leave it blank and the dev cut simply accumulates in the bot wallet — supported,
 but then you are the one who has to remember to sweep it.
@@ -240,8 +258,11 @@ a tokenized equity.
 
 ## Going live
 
-1. Launch SPACEINU on pons v2 paired with SPCX, with `creatorFeeRecipient` set
-   to the bot wallet, and the holder-fee-sharing toggle **off**.
+1. Launch SPACEINU on pons v2 paired with SPCX from your normal deployer
+   wallet, and type the BOT wallet's address into pons's "Creator wallet"
+   field. Leaving that field blank defaults it to the connected wallet — which
+   would make your deployer wallet the fee recipient and force its key onto the
+   server. Leave the holder-fee-sharing toggle **off**.
 2. Set `TOKEN_ADDRESS` and `WALLET_PRIVATE_KEY` in `.env`.
 3. Fund the wallet with ETH for gas.
 4. `npm run check` — confirm the `feeRecip.` line shows ✓.
