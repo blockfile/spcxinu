@@ -15,7 +15,7 @@
 //     stall-free: reading the nonce per tx from a load-balanced RPC is exactly
 //     what caused the stale-nonce failures and the serial slowness.
 
-const { Contract, formatUnits } = require('ethers');
+const { Contract, MaxUint256, formatUnits } = require('ethers');
 const config = require('../config');
 const repo = require('../db/repository');
 const { provider, wallet } = require('./provider');
@@ -60,10 +60,42 @@ async function airdropToken({ rewardToken, allocations, cycleId }) {
   return pipelineAirdrop({ rewardToken, allocations, record });
 }
 
+/**
+ * Make sure the disperse contract can pull the reward token from this wallet.
+ *
+ * The contract PULLS with transferFrom, so without an allowance every batch
+ * reverts — and it reverts after the escrow has been claimed, so the cycle
+ * reports "airdrop delivered nothing" while the SPCX sits in the wallet. A
+ * forgotten approval used to be the first suspect in that error message; doing
+ * it here means it can no longer happen.
+ *
+ * Approved as MaxUint256 rather than per batch: a fresh approval per cycle
+ * would double the transaction count for no security gain, since this wallet
+ * only ever holds what it is about to distribute.
+ */
+async function ensureDisperseAllowance({ rewardToken, spender, needed }) {
+  const token = erc20(rewardToken, provider);
+  const allowance = await token.allowance(wallet.address, spender);
+  if (allowance >= needed) return false;
+  console.log(`[airdrop] approving ${rewardToken} to the disperser ${spender}`);
+  const tx = await sendTx(() => erc20(rewardToken, wallet).approve(spender, MaxUint256));
+  await tx.wait();
+  return true;
+}
+
 // One disperseToken tx per batch (nonce-safe via sendTx). A whole batch shares a
 // tx, so a batch either lands for everyone in it or is recorded failed together.
 async function disperseAirdrop({ rewardToken, allocations, record }) {
   const disperse = new Contract(config.disperseAddress, DISPERSE_ABI, wallet);
+
+  // The whole airdrop's worth, so one approval covers every batch.
+  const total = allocations.reduce((sum, a) => sum + BigInt(a.amountRaw), 0n);
+  await ensureDisperseAllowance({
+    rewardToken,
+    spender: config.disperseAddress,
+    needed: total,
+  });
+
   let sent = 0;
   let failed = 0;
   for (const batch of chunk(allocations, config.airdropBatchSize)) {
@@ -167,4 +199,4 @@ async function pipelineAirdrop({ rewardToken, allocations, record }) {
   return { sent, failed };
 }
 
-module.exports = { airdropToken, chunk };
+module.exports = { airdropToken, chunk, ensureDisperseAllowance };

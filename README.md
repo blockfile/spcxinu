@@ -273,9 +273,25 @@ ETH only (`disperse` / `disperseEqual`, both `payable`) and has no
 `disperseToken`. Pointing `DISPERSE_ADDRESS` at it makes every batch revert on
 an unknown selector.
 
-**2. The wallet must `approve()` SPCX to that contract first.** The bot does not
-do this for you, and a missing approval is the first suspect named in the
-"airdrop delivered nothing" error for exactly this reason.
+**2. The approval is handled for you.** The contract pulls with `transferFrom`,
+so it needs an allowance — the bot now approves SPCX to `DISPERSE_ADDRESS` on
+the first airdrop that uses it, because a forgotten approval used to fail
+*after* the escrow had been claimed.
+
+`contracts/TokenDisperser.sol` in this repo is that contract, with the exact
+signature above. Deploy it with your own key:
+
+```bash
+npm i solc --no-save                          # needed once, for the deployment
+node scripts/deploy-disperser.js              # compile only, sends nothing
+node scripts/deploy-disperser.js --confirm    # deploys
+```
+
+It has no owner, no admin, no upgrade path and holds no balance between
+transactions — every unit moves from the caller to a recipient in one call or
+the whole call reverts. A batch is all-or-nothing on purpose: a partially
+applied airdrop is worse than a failed one, because you cannot tell who was
+already paid without reading receipts.
 
 SPCX itself disperses fine — it is a standard OpenZeppelin-style ERC-20
 (`approve`, `transfer` and `transferFrom` all verified against the live

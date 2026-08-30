@@ -117,9 +117,9 @@ function summarizeReward(reward) {
       note: `airdrop reached 0 of ${reward.recipients} recipients`,
       error:
         `airdrop delivered nothing: 0 of ${reward.recipients} recipients received SPCX ` +
-        `(${reward.failed} failed). Likely causes: DISPERSE_ADDRESS is set but this wallet ` +
-        'has never approve()d SPCX to it, the wallet is out of ETH for gas, or SPCX is ' +
-        'paused. The SPCX claimed this cycle is still sitting in the wallet.',
+        `(${reward.failed} failed). Likely causes: the wallet is out of ETH for gas, SPCX is ` +
+        'paused, or DISPERSE_ADDRESS points at something that is not an ERC-20 disperser. ' +
+        'The SPCX claimed this cycle is still sitting in the wallet.',
     };
   }
   if (reward.failed > 0) {
