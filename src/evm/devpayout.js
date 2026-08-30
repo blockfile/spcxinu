@@ -25,7 +25,7 @@
 const { parseUnits } = require('ethers');
 const config = require('../config');
 const { wallet } = require('./provider');
-const { erc20 } = require('./erc20');
+const { erc20, readTokenBalance } = require('./erc20');
 const { sendTx } = require('./send');
 const { toUnitString } = require('./units');
 
@@ -66,7 +66,11 @@ async function sendDevPayout({ quoteAmount }) {
     return { ...base, sent: true, signature: fakeSig('devpayout') };
   }
 
-  const raw = parseUnits(toUnitString(quoteAmount, config.rewardDecimals), config.rewardDecimals);
+  const wanted = parseUnits(toUnitString(quoteAmount, config.rewardDecimals), config.rewardDecimals);
+  // Same clamp as the buyback, for the same reason: the legs are rounded
+  // decimals and this one runs last of all.
+  const held = await readTokenBalance(config.rewardTokenAddress, wallet.address);
+  const raw = wanted <= held ? wanted : held;
   if (raw <= 0n) {
     return { ...base, skipped: true, reason: 'dev cut rounds to zero base units' };
   }

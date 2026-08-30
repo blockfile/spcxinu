@@ -48,12 +48,27 @@ function applySlippage(quoted, slippagePct) {
   return (BigInt(quoted) * BigInt(Math.round((100 - slippagePct) * 100))) / BPS;
 }
 
+/**
+ * Pure: how much of `wanted` can actually be spent, given the balance `held`.
+ *
+ * Never more than is there. The legs of a claim are computed as decimal Numbers
+ * rounded to 9 places, so they can sum to marginally more than the claim was in
+ * wei, and whichever leg runs last inherits the whole discrepancy.
+ */
+function clampToBalance(wanted, held) {
+  return wanted <= held ? wanted : held;
+}
+
 /** Pure: a one-line description of what the buyback did. */
 function describeOutcome(r) {
   if (r.skipped) return `buyback skipped: ${r.reason}`;
   if (r.burned) return `buyback bought ${r.tokensBought} ${config.tokenSymbol} for ${r.quoteSpent} SPCX and burned it`;
   if (r.bought) return `buyback bought ${r.tokensBought} ${config.tokenSymbol} but the BURN failed (${r.error}) — the tokens are in the wallet`;
-  return `buyback FAILED (${r.error}) — the SPCX stays in the wallet and is retried next cycle`;
+  // Deliberately NOT "retried next cycle": the next cycle computes a fresh
+  // share from a fresh claim, so this amount is not automatically re-attempted.
+  // It stays in the wallet until a later cycle's clamp happens to use it or an
+  // operator acts on it, and saying otherwise would hide idle funds.
+  return `buyback FAILED (${r.error}) — the SPCX stays in the wallet, NOT auto-retried`;
 }
 
 /** Buy `quoteAmountRaw` worth of the launch token, on whichever venue it trades. */
@@ -167,9 +182,32 @@ async function buybackAndBurn({ launch, quoteAmount }) {
     };
   }
 
-  const quoteRaw = parseUnits(toUnitString(quoteAmount, config.rewardDecimals), config.rewardDecimals);
-  if (quoteRaw <= 0n) {
+  const wanted = parseUnits(toUnitString(quoteAmount, config.rewardDecimals), config.rewardDecimals);
+  if (wanted <= 0n) {
     return { ...base, skipped: true, reason: 'burn share rounds to zero base units' };
+  }
+
+  // Clamp to what the wallet actually holds.
+  //
+  // The legs are computed as decimal Numbers and rounded to 9 places, so their
+  // sum can exceed the claim by a few wei — and this leg runs LAST, absorbing
+  // every earlier rounding. A live cycle failed on exactly that: it asked for
+  // 0.218952125 while holding 0.218952123727002065, short by 1.27e-9, and the
+  // token reverted ERC20InsufficientBalance three times.
+  //
+  // Spending what is there instead is both correct and self-limiting: the
+  // shortfall is always dust, and the dev cut is untouched because a clamp can
+  // only ever reduce this leg, never reach past it.
+  const held = await readTokenBalance(config.rewardTokenAddress, wallet.address);
+  const quoteRaw = clampToBalance(wanted, held);
+  if (quoteRaw <= 0n) {
+    return { ...base, skipped: true, reason: 'the wallet holds no SPCX to buy back with' };
+  }
+  if (quoteRaw < wanted) {
+    console.warn(
+      `[buyback] wallet holds ${formatUnits(held, config.rewardDecimals)} SPCX but the share is ` +
+        `${formatUnits(wanted, config.rewardDecimals)} — spending what is there (rounding dust)`
+    );
   }
 
   let buy;
@@ -212,4 +250,7 @@ async function buybackAndBurn({ launch, quoteAmount }) {
   }
 }
 
-module.exports = { buybackAndBurn, buyToken, burnToken, applySlippage, describeOutcome, BUY_ATTEMPTS };
+module.exports = {
+  buybackAndBurn, buyToken, burnToken, applySlippage, describeOutcome,
+  clampToBalance, BUY_ATTEMPTS,
+};

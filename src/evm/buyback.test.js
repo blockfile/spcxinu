@@ -4,7 +4,7 @@ process.env.DRY_RUN = 'true';
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { applySlippage, describeOutcome, buybackAndBurn } = require('./buyback');
+const { applySlippage, describeOutcome, buybackAndBurn, clampToBalance } = require('./buyback');
 const { permit2AllowanceIsSufficient, MAX_UINT160, EXPIRY_MARGIN_SEC } = require('./permit2');
 
 // ── slippage ───────────────────────────────────────────────────────────────
@@ -44,10 +44,10 @@ test('a bought-but-not-burned outcome says the tokens are in the wallet', () => 
   assert.match(out, /wallet/);
 });
 
-test('a failed buy says the SPCX is retried next cycle', () => {
+test('a failed buy names the error and says where the SPCX went', () => {
   const out = describeOutcome({ bought: false, burned: false, error: 'quoted zero' });
   assert.match(out, /quoted zero/);
-  assert.match(out, /next cycle/);
+  assert.match(out, /stays in the wallet/);
 });
 
 test('a zero burn share is a clean skip', () => {
@@ -118,4 +118,35 @@ test('an allowance expiring within the margin is refreshed early', () => {
 test('expiration 0 means "no allowance", not "never expires"', () => {
   const ok = permit2AllowanceIsSufficient({ amount: MAX_UINT160, expiration: 0, needed: 1n, nowSec: NOW });
   assert.strictEqual(ok, false);
+});
+
+// ── spending no more than is held ──────────────────────────────────────────
+
+test('the exact live shortfall that failed cycle 49 is clamped, not reverted', () => {
+  // The leg asked for 0.218952125 while the wallet held 0.218952123727002065 —
+  // 1.27e-9 short, because the four legs are rounded decimals and this one runs
+  // last. The token reverted ERC20InsufficientBalance three times.
+  const wanted = 218952125000000000n;
+  const held = 218952123727002065n;
+  assert.strictEqual(clampToBalance(wanted, held), held, 'spend what is there');
+});
+
+test('a comfortable balance is spent in full, not clamped', () => {
+  assert.strictEqual(clampToBalance(100n, 500n), 100n);
+});
+
+test('an exactly-sufficient balance is spent in full', () => {
+  assert.strictEqual(clampToBalance(100n, 100n), 100n);
+});
+
+test('an empty wallet clamps to zero, which the caller turns into a skip', () => {
+  assert.strictEqual(clampToBalance(100n, 0n), 0n);
+});
+
+test('the failure message does not promise an automatic retry', () => {
+  // The next cycle computes a fresh share from a fresh claim, so a failed
+  // buyback is NOT re-attempted. Claiming otherwise would hide idle funds.
+  const out = describeOutcome({ bought: false, burned: false, error: 'reverted' });
+  assert.doesNotMatch(out, /retried next cycle/);
+  assert.match(out, /NOT auto-retried/);
 });
