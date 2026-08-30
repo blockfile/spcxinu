@@ -18,6 +18,7 @@
 const { Contract, MaxUint256, formatUnits } = require('ethers');
 const config = require('../config');
 const repo = require('../db/repository');
+const { fitAllocationsToBalance } = require('../services/distribution');
 const { provider, wallet } = require('./provider');
 const { erc20, getDecimals } = require('./erc20');
 const { sendTx } = require('./send');
@@ -39,6 +40,27 @@ async function airdropToken({ rewardToken, allocations, cycleId }) {
   if (!allocations || allocations.length === 0) return { sent: 0, failed: 0 };
 
   const decimals = config.dryRun ? config.rewardDecimals : await getDecimals(rewardToken);
+
+  // Never try to send more than the wallet actually holds.
+  //
+  // The disperser is all-or-nothing, so a shortfall of a fraction of a cent
+  // reverts a whole batch of 30 and those holders get NOTHING. That happened
+  // live: a final batch of 5 wanted 0.086173 SPCX against a 0.047679 balance
+  // and all 5 were skipped, while the 120 holders in earlier batches were paid
+  // in full. Scaling down keeps it proportional and pays everyone.
+  if (!config.dryRun) {
+    const held = await erc20(rewardToken, provider).balanceOf(wallet.address);
+    const fit = fitAllocationsToBalance(allocations, held);
+    if (fit.scaled) {
+      console.warn(
+        `[airdrop] allocations total ${formatUnits(fit.wanted, decimals)} but the wallet holds ` +
+          `${formatUnits(fit.balance, decimals)} — scaling every payout down to fit ` +
+          `(short by ${formatUnits(fit.wanted - fit.balance, decimals)})`
+      );
+    }
+    allocations = fit.allocations;
+    if (allocations.length === 0) return { sent: 0, failed: 0 };
+  }
   const uiOf = (raw) => Number(formatUnits(BigInt(raw), decimals));
   const record = (a, signature, status) =>
     repo.addAirdrop({

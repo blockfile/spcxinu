@@ -27,6 +27,22 @@ function capToRaw(capPct, supplyRaw) {
   return raw > 0n ? raw : 1n;
 }
 
+// largest-remainder allocation of `amount` across `parts` weighted by part.w / wTotal
+function allocate(amount, parts, wTotal) {
+  const res = parts.map((p) => {
+    const numer = amount * p.w;
+    return { key: p.key, amount: numer / wTotal, rem: numer % wTotal };
+  });
+  let leftover = amount - res.reduce((s, r) => s + r.amount, 0n);
+  // stable sort: bigger remainder first, tie-break by key for determinism
+  res.sort((a, b) => (b.rem > a.rem ? 1 : b.rem < a.rem ? -1 : a.key < b.key ? -1 : 1));
+  for (let i = 0; i < res.length && leftover > 0n; i++) {
+    res[i].amount += 1n;
+    leftover -= 1n;
+  }
+  return res;
+}
+
 function computeWeightedAllocations(holders, totalRaw, opts = {}) {
   const total = BigInt(totalRaw.toString());
   if (total <= 0n || !holders || holders.length === 0) return [];
@@ -74,21 +90,6 @@ function computeWeightedAllocations(holders, totalRaw, opts = {}) {
   }
   if (totalWeight === 0n) return [];
 
-  // largest-remainder allocation of `amount` across `parts` weighted by part.w / wTotal
-  function allocate(amount, parts, wTotal) {
-    const res = parts.map((p) => {
-      const numer = amount * p.w;
-      return { key: p.key, amount: numer / wTotal, rem: numer % wTotal };
-    });
-    let leftover = amount - res.reduce((s, r) => s + r.amount, 0n);
-    // stable sort: bigger remainder first, tie-break by key for determinism
-    res.sort((a, b) => (b.rem > a.rem ? 1 : b.rem < a.rem ? -1 : a.key < b.key ? -1 : 1));
-    for (let i = 0; i < res.length && leftover > 0n; i++) {
-      res[i].amount += 1n;
-      leftover -= 1n;
-    }
-    return res;
-  }
 
   // 1) total -> per group, by capped weight
   const groupReward = allocate(
@@ -121,4 +122,37 @@ function computeWeightedAllocations(holders, totalRaw, opts = {}) {
   return out;
 }
 
-module.exports = { computeWeightedAllocations, capToRaw };
+/**
+ * Shrink an allocation set so it cannot ask for more than the wallet holds.
+ *
+ * The disperser is all-or-nothing: one transfer short of the balance reverts
+ * the whole batch of 30, so a shortfall of a fraction of a cent silently skips
+ * dozens of holders. That happened live — a batch of 5 wanted 0.086173 SPCX
+ * against a 0.047679 balance, and those 5 got nothing.
+ *
+ * Rescaling by largest remainder keeps it proportional and exact: everyone
+ * keeps their relative share and the new total equals the balance to the wei.
+ * Paying slightly less is strictly better than paying some holders nothing.
+ *
+ * @returns {{allocations: Array, scaled: boolean, wanted: bigint, balance: bigint}}
+ */
+function fitAllocationsToBalance(allocations, balanceRaw) {
+  const balance = BigInt(balanceRaw);
+  const wanted = allocations.reduce((s, a) => s + BigInt(a.amountRaw), 0n);
+  if (wanted <= balance) return { allocations, scaled: false, wanted, balance };
+  if (balance <= 0n) return { allocations: [], scaled: true, wanted, balance };
+
+  const parts = allocations.map((a) => ({ key: a.owner, w: BigInt(a.amountRaw) }));
+  const res = allocate(balance, parts, wanted);
+  const byOwner = new Map(res.map((r) => [r.key, r.amount]));
+  return {
+    allocations: allocations
+      .map((a) => ({ ...a, amountRaw: (byOwner.get(a.owner) || 0n).toString() }))
+      .filter((a) => BigInt(a.amountRaw) > 0n),
+    scaled: true,
+    wanted,
+    balance,
+  };
+}
+
+module.exports = { computeWeightedAllocations, capToRaw, fitAllocationsToBalance };

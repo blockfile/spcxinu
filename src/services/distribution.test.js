@@ -180,3 +180,49 @@ test('a holder with zero balance receives nothing', () => {
   assert.strictEqual(out.length, 1);
   assert.strictEqual(out[0].owner, '0xbb');
 });
+
+// ── never ask for more than the wallet holds ──────────────────────────────
+
+test('allocations within the balance are left exactly as they are', () => {
+  const { fitAllocationsToBalance } = require('./distribution');
+  const allocs = [{ owner: '0xa', amountRaw: '100' }, { owner: '0xb', amountRaw: '200' }];
+  const fit = fitAllocationsToBalance(allocs, 300n);
+  assert.strictEqual(fit.scaled, false);
+  assert.deepStrictEqual(fit.allocations, allocs);
+});
+
+test('a shortfall scales everyone down instead of skipping a whole batch', () => {
+  // The live failure: a batch of 5 wanted more than the wallet held, the
+  // disperser is all-or-nothing, and all 5 holders got nothing while earlier
+  // batches were paid in full. Paying slightly less beats paying nobody.
+  const { fitAllocationsToBalance } = require('./distribution');
+  const allocs = [
+    { owner: '0xa', amountRaw: '600' },
+    { owner: '0xb', amountRaw: '300' },
+    { owner: '0xc', amountRaw: '100' },
+  ];
+  const fit = fitAllocationsToBalance(allocs, 500n);
+  assert.strictEqual(fit.scaled, true);
+  const sum = fit.allocations.reduce((s, a) => s + BigInt(a.amountRaw), 0n);
+  assert.strictEqual(sum, 500n, 'the scaled total must equal the balance to the wei');
+  assert.strictEqual(fit.allocations.length, 3, 'nobody is dropped');
+  // proportions preserved: 6:3:1 of 500
+  assert.strictEqual(fit.allocations[0].amountRaw, '300');
+  assert.strictEqual(fit.allocations[1].amountRaw, '150');
+  assert.strictEqual(fit.allocations[2].amountRaw, '50');
+});
+
+test('an empty wallet pays nobody rather than reverting a batch', () => {
+  const { fitAllocationsToBalance } = require('./distribution');
+  const fit = fitAllocationsToBalance([{ owner: '0xa', amountRaw: '10' }], 0n);
+  assert.deepStrictEqual(fit.allocations, []);
+  assert.strictEqual(fit.scaled, true);
+});
+
+test('holders whose scaled share rounds to zero are dropped, not sent 0', () => {
+  const { fitAllocationsToBalance } = require('./distribution');
+  const allocs = [{ owner: '0xa', amountRaw: '1000000' }, { owner: '0xb', amountRaw: '1' }];
+  const fit = fitAllocationsToBalance(allocs, 2n);
+  assert.ok(fit.allocations.every((a) => BigInt(a.amountRaw) > 0n));
+  assert.strictEqual(fit.allocations.reduce((s, a) => s + BigInt(a.amountRaw), 0n), 2n);
+});
