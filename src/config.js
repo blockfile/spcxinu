@@ -48,7 +48,15 @@ function loadWallet() {
     throw new Error(`Could not parse WALLET_PRIVATE_KEY: ${err.message}`);
   }
 }
-const { wallet, ephemeral: walletIsEphemeral } = loadWallet();
+// Resolved LAZILY, on first access — see the defineProperty calls at the bottom
+// of this file. Loading it here instead meant `require('./config')` threw when
+// no key was set, which crash-looped the PUBLIC API on a missing WALLET_PRIVATE
+// _KEY even though server.js never signs anything and loads no EVM code at all.
+let walletState = null;
+function resolveWallet() {
+  if (!walletState) walletState = loadWallet();
+  return walletState;
+}
 
 // Where the dev cut is sent at the end of each cycle. Optional: blank leaves it
 // in the bot wallet, which is the old behaviour.
@@ -148,8 +156,8 @@ const config = {
   dryRun: DRY_RUN,
   rpcUrl: process.env.RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
   chainId: num(process.env.CHAIN_ID, 4663),
-  wallet,
-  walletIsEphemeral,
+  // `wallet` and `walletIsEphemeral` are attached below as lazy getters, not
+  // set here — see the note at the bottom of this file.
 
   // pons v2 wiring (verified on chain; all overridable per deployment).
   v2Factory: lowerOr(process.env.PONS_V2_FACTORY, '0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e'),
@@ -201,5 +209,29 @@ const config = {
   apiKey: process.env.API_KEY || null,
   botPort: num(process.env.BOT_PORT, 3100),
 };
+
+// The signing wallet, resolved on FIRST ACCESS rather than at require time.
+//
+// server.js requires this module and must never need a key — it loads no EVM
+// code and signs nothing. Resolving eagerly made `require('./config')` throw
+// whenever WALLET_PRIVATE_KEY was unset with DRY_RUN=false, which crash-looped
+// the public API over a key it never uses, and quietly defeated the point of
+// running the bot as a separate process.
+//
+// bot.js still fails fast: it requires evm/provider, which builds a signer at
+// module load, so a missing key stops the bot at startup with the same error.
+//
+// Non-enumerable so that JSON.stringify or a spread of `config` cannot trigger
+// the lookup — and therefore the throw — somewhere that never wanted a wallet.
+Object.defineProperty(config, 'wallet', {
+  get: () => resolveWallet().wallet,
+  enumerable: false,
+  configurable: true,
+});
+Object.defineProperty(config, 'walletIsEphemeral', {
+  get: () => resolveWallet().ephemeral,
+  enumerable: false,
+  configurable: true,
+});
 
 module.exports = config;

@@ -67,8 +67,25 @@ test('DRY_RUN generates an ephemeral wallet when no key is set', () => {
   assert.strictEqual(config.walletIsEphemeral, true);
 });
 
-test('a live run with no key is refused', () => {
+test('a live run with no key is refused — on ACCESS, not on require', () => {
+  // Requiring config must never throw: server.js requires it and signs
+  // nothing, so an eager wallet lookup crash-looped the public API over a key
+  // it does not use. The refusal still happens, just at the point of use.
   process.env.WALLET_PRIVATE_KEY = '';
-  assert.throws(() => loadConfig({ DRY_RUN: 'false' }), /WALLET_PRIVATE_KEY/);
+  let config;
+  assert.doesNotThrow(() => {
+    config = loadConfig({ DRY_RUN: 'false' });
+  }, 'requiring config must not need a wallet');
+  assert.throws(() => config.wallet, /WALLET_PRIVATE_KEY/);
+  process.env.DRY_RUN = 'true';
+});
+
+test('the wallet is not enumerable, so serialising config cannot trigger it', () => {
+  // A spread or JSON.stringify of config elsewhere must not resolve the wallet
+  // — and therefore must not throw — in a process that never wanted one.
+  process.env.WALLET_PRIVATE_KEY = '';
+  const config = loadConfig({ DRY_RUN: 'false' });
+  assert.ok(!Object.keys(config).includes('wallet'));
+  assert.doesNotThrow(() => JSON.stringify(config));
   process.env.DRY_RUN = 'true';
 });
