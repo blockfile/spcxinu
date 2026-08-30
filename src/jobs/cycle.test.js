@@ -156,3 +156,15 @@ test('a mismatch is recorded as ok:false with the address actually paid', () => 
   assert.strictEqual(check.actual, '0xdistributor');
   assert.strictEqual(check.expected, '0xus');
 });
+
+test('the dev leg never goes negative on rounding', () => {
+  // A live cycle logged "-1e-9 to dev": the remainder absorbs the rounding of
+  // the other three legs and can dip below zero. Harmless while the payout is
+  // skipped, but parseUnits would throw on it the day DEV_PAYOUT_ADDRESS is set.
+  const { splitClaim } = require('./cycle');
+  for (const claim of [0.7167010553398622, 1.0221684558296817, 0.7297212717303938, 4.033175952467068]) {
+    const s = splitClaim(claim);
+    assert.ok(s.devQuote >= 0, `dev leg went negative on ${claim}: ${s.devQuote}`);
+    assert.ok(Object.is(s.devQuote, 0) || s.devQuote > 0, 'must not be -0 either');
+  }
+});

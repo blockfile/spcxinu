@@ -60,7 +60,14 @@ function splitClaim(claimedQuote) {
   const rewardQuote = round(claimedQuote * (config.rewardPct / 100));
   const burnQuote = round(claimedQuote * (config.burnPct / 100));
   const gasQuote = round(claimedQuote * (config.gasPct / 100));
-  const devQuote = round(claimedQuote - rewardQuote - burnQuote - gasQuote);
+  // The dev leg is the remainder, so it absorbs the rounding of the other
+  // three and can land just below zero -- a live cycle logged "-1e-9 to dev".
+  // Config already refuses a split whose three legs exceed 100, so a negative
+  // here is float error and nothing else. Clamp it: today the payout is skipped
+  // when DEV_PAYOUT_ADDRESS is unset, but a negative amount reaching parseUnits
+  // would throw, and the first person to set that address would be the one to
+  // find out.
+  const devQuote = Math.max(0, round(claimedQuote - rewardQuote - burnQuote - gasQuote));
   return { rewardQuote, burnQuote, gasQuote, devQuote };
 }
 
