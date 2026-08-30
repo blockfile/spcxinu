@@ -20,8 +20,34 @@ const { getTokenInfo } = require('../services/holders');
 const { getRewards } = require('../services/rewards');
 const { getCurveMarket } = require('../services/curvemarket');
 const { getQuotePrice } = require('../services/quoteprice');
+const { getBurns } = require('../services/burns');
 
 const router = express.Router();
+
+/**
+ * Pure: what the burned SPACEINU is worth at the CURRENT price.
+ *
+ * Deliberately distinct from `burnQuoteSpent`, which is what the buybacks
+ * actually cost in SPCX. The two answer different questions and drift apart as
+ * the price moves; conflating them would let the site claim a burn was worth
+ * more (or less) than was ever spent on it.
+ */
+function burnedUsd(burns, priceUsd) {
+  if (typeof burns.totalBurned !== 'number' || typeof priceUsd !== 'number') return null;
+  return burns.totalBurned * priceUsd;
+}
+
+/** Pure: burned tokens as a share of what was minted, in percent. */
+function burnedPctOfSupply(burns, token) {
+  if (typeof burns.totalBurned !== 'number') return null;
+  if (token.totalSupply == null || token.decimals == null) return null;
+  const minted = Number(BigInt(token.totalSupply)) / 10 ** token.decimals;
+  // The explorer reports CIRCULATING supply, which a burn has already reduced —
+  // so the denominator is what remains plus what we destroyed.
+  const original = minted + burns.totalBurned;
+  if (!(original > 0)) return null;
+  return (burns.totalBurned / original) * 100;
+}
 
 /** Pure: USD value of the SPCX paid to holders, or null if either leg is missing. */
 function rewardedUsd(rewards, quote) {
@@ -76,7 +102,7 @@ function withSupplyFallback(token, fallback) {
  * once the explorer has an exchange rate), then the bonding-curve computation
  * — so the tile shows a real number at every stage of the token's life.
  */
-function buildStats({ market, token: explorerToken, rewards = {}, curve = {}, quote = {}, symbol, tokenAddress, supply = null }) {
+function buildStats({ market, token: explorerToken, rewards = {}, burns = {}, curve = {}, quote = {}, symbol, tokenAddress, supply = null }) {
   const token = withSupplyFallback(explorerToken, supply);
   const priceUsd = market.priceUsd ?? curve.priceUsd ?? null;
   const totalRewarded = rewards.totalRewarded ?? null; // SPCX token amount
@@ -96,6 +122,17 @@ function buildStats({ market, token: explorerToken, rewards = {}, curve = {}, qu
     // (`raw.<asset>Rewarded ?? raw.<asset>_rewarded ?? raw.rewarded`).
     spcxRewarded: totalRewardedUsd,
     rewarded: totalRewardedUsd,
+    // ── Buyback + burn ──────────────────────────────────────────────────────
+    // SPACEINU tokens destroyed. The headline number for the burn tile.
+    totalBurned: burns.totalBurned ?? null,
+    // What those buybacks cost, in SPCX — what was actually spent.
+    burnQuoteSpent: burns.burnQuoteSpent ?? null,
+    // What the burned tokens are worth at today's price — a different figure
+    // from what they cost, and it moves with the market.
+    totalBurnedUsd: burnedUsd(burns, priceUsd),
+    burnedPctOfSupply: burnedPctOfSupply(burns, token),
+    burns: burns.burns ?? null,
+
     priceUsd,
     price: priceUsd,
     liquidityUsd: market.liquidityUsd ?? null,
@@ -109,17 +146,20 @@ router.get('/stats', async (req, res, next) => {
   try {
     // Independent upstreams — one being down must not delay or fail the other,
     // so all settle and a rejection degrades to nulls for its own fields only.
-    const [marketResult, tokenResult, rewardsResult, curveResult, quoteResult] = await Promise.allSettled([
-      getMarketData(),
-      getTokenInfo(),
-      getRewards(),
-      getCurveMarket(),
-      getQuotePrice(),
-    ]);
+    const [marketResult, tokenResult, rewardsResult, burnsResult, curveResult, quoteResult] =
+      await Promise.allSettled([
+        getMarketData(),
+        getTokenInfo(),
+        getRewards(),
+        getBurns(),
+        getCurveMarket(),
+        getQuotePrice(),
+      ]);
 
     const market = marketResult.status === 'fulfilled' ? marketResult.value : {};
     const token = tokenResult.status === 'fulfilled' ? tokenResult.value : {};
     const rewards = rewardsResult.status === 'fulfilled' ? rewardsResult.value : {};
+    const burns = burnsResult.status === 'fulfilled' ? burnsResult.value : {};
     const curve = curveResult.status === 'fulfilled' ? curveResult.value : {};
     const quote = quoteResult.status === 'fulfilled' ? quoteResult.value : {};
 
@@ -131,6 +171,9 @@ router.get('/stats', async (req, res, next) => {
     }
     if (rewardsResult.status === 'rejected') {
       console.warn('[spaceinu] rewards unavailable:', rewardsResult.reason?.message);
+    }
+    if (burnsResult.status === 'rejected') {
+      console.warn('[spaceinu] burn totals unavailable:', burnsResult.reason?.message);
     }
     if (curveResult.status === 'rejected') {
       console.warn('[spaceinu] curve price unavailable:', curveResult.reason?.message);
@@ -144,6 +187,7 @@ router.get('/stats', async (req, res, next) => {
         market,
         token,
         rewards,
+        burns,
         curve,
         quote,
         symbol: config.tokenSymbol,

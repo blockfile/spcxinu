@@ -228,10 +228,53 @@ async function getDistributedTotal(rewardToken) {
   return row || { totalUi: 0, sends: 0, holders: 0 };
 }
 
+/**
+ * Everything this bot has bought and burned, summed from the buyback STEPS.
+ *
+ * Read from steps rather than cycles for the same reason the claim total is: a
+ * step is written the moment it succeeds, while the cycle's columns are only
+ * set at finish, so a cycle that burns and then fails later would drop its burn
+ * from the total.
+ *
+ * Filtered on a real transaction hash, so DRY_RUN burns — recorded with a
+ * fabricated `burn_ka9f2x` signature — can never inflate a number the site
+ * shows to visitors. `burned: true` excludes the bought-but-not-burned state,
+ * where the tokens exist and supply has NOT dropped.
+ *
+ * @returns {Promise<{tokensBurned:number, quoteSpent:number, burns:number}>}
+ */
+async function getBurnTotal() {
+  const db = getDb();
+  const [row] = await db
+    .collection('steps')
+    .aggregate([
+      {
+        $match: {
+          name: 'buyback',
+          status: 'ok',
+          'detail.burned': true,
+          signature: { $regex: REAL_TX_HASH },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          burns: { $sum: 1 },
+          tokensBurned: { $sum: { $ifNull: ['$detail.tokensBought', 0] } },
+          quoteSpent: { $sum: { $ifNull: ['$detail.quoteSpent', 0] } },
+        },
+      },
+      { $project: { _id: 0, burns: 1, tokensBurned: 1, quoteSpent: 1 } },
+    ])
+    .toArray();
+  return row || { tokensBurned: 0, quoteSpent: 0, burns: 0 };
+}
+
 module.exports = {
   createCycle,
   finishCycle,
   addStep,
+  getBurnTotal,
   getCycleWithSteps,
   getCycles,
   getLastCycle,

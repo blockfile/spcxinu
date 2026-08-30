@@ -17,6 +17,7 @@ const db = require('../src/db');
 const { getMarketData } = require('../src/services/marketdata');
 const { getTokenInfo } = require('../src/services/holders');
 const { getRewards } = require('../src/services/rewards');
+const { getBurns } = require('../src/services/burns');
 const { getCurveMarket } = require('../src/services/curvemarket');
 const { getQuotePrice } = require('../src/services/quoteprice');
 const { getFeedPage } = require('../src/services/rewardsfeed');
@@ -102,7 +103,9 @@ async function main() {
   console.log(`  explorer   : ${config.explorerApi}`);
   console.log(`  dexscreener: chain "${config.dexscreenerChainId}"`);
   console.log(`  pons api   : ${config.ponsApi}`);
-  console.log(`  split      : ${config.rewardPct}% holders / ${config.devPct}% dev`);
+  console.log(
+    `  split      : ${config.rewardPct}% holders / ${config.burnPct}% buyback+burn / ${config.devPct}% dev`
+  );
   console.log(
     `  dev payout : ${config.devPayoutAddress || '⚠️ not set — the dev cut accumulates in the bot wallet'}`
   );
@@ -125,10 +128,11 @@ async function main() {
     return;
   }
 
-  const [market, token, rewards, curve, quote, feed] = await Promise.allSettled([
+  const [market, token, rewards, burns, curve, quote, feed] = await Promise.allSettled([
     getMarketData(),
     getTokenInfo(),
     getRewards(),
+    getBurns(),
     getCurveMarket(),
     getQuotePrice(),
     getFeedPage(null, 3),
@@ -163,6 +167,13 @@ async function main() {
   if (rewards.status === 'rejected') console.log(`  FAILED: ${rewards.reason.message}`);
   else console.log(`  totalRewarded: ${show(rewards.value.totalRewarded)} SPCX (real payouts only)`);
 
+  hr('OUR LEDGER (buyback + burn)');
+  if (burns.status === 'rejected') console.log(`  FAILED: ${burns.reason.message}`);
+  else {
+    console.log(`  totalBurned  : ${show(burns.value.totalBurned)} ${config.tokenSymbol} destroyed`);
+    console.log(`  cost         : ${show(burns.value.burnQuoteSpent)} SPCX across ${show(burns.value.burns)} buybacks`);
+  }
+
   hr('OUR LEDGER (first 3 rows of GET /rewards)');
   if (feed.status === 'rejected') console.log(`  FAILED: ${feed.reason.message}`);
   else if (feed.value.rows.length === 0) console.log('  no payouts yet');
@@ -183,6 +194,7 @@ async function main() {
         market: market.status === 'fulfilled' ? market.value : {},
         token: token.status === 'fulfilled' ? token.value : {},
         rewards: rewards.status === 'fulfilled' ? rewards.value : {},
+        burns: burns.status === 'fulfilled' ? burns.value : {},
         curve: curve.status === 'fulfilled' ? curve.value : {},
         quote: quote.status === 'fulfilled' ? quote.value : {},
         symbol: config.tokenSymbol,

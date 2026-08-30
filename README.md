@@ -128,7 +128,7 @@ zero as a real number.
 | Route | Returns |
 | --- | --- |
 | `GET /token` | name, ticker, contract address, chain |
-| `GET /stats` | `marketCap`, `holders`, `totalRewarded`, `totalRewardedUsd`, `priceUsd`, `liquidityUsd` |
+| `GET /stats` | `marketCap`, `holders`, `totalRewarded`, `totalRewardedUsd`, `totalBurned`, `totalBurnedUsd`, `burnedPctOfSupply`, `priceUsd`, `liquidityUsd` |
 | `GET /rewards?cursor&limit` | the payout ledger — `{ transactions: [{ wallet, amount, txHash, timestamp }] }` |
 | `GET /health` | `{ ok, uptimeSec }` |
 
@@ -139,6 +139,21 @@ is in its base URL.
 Blockscout's circulating market cap → the pons bonding-curve price × SPCX/USD.
 The last of those is what keeps the tile alive before graduation, when
 DexScreener has nothing to say.
+
+**The burn fields**, for a burn tile:
+
+| Field | Is |
+| --- | --- |
+| `totalBurned` | SPACEINU tokens destroyed — the headline number |
+| `burnQuoteSpent` | what those buybacks **cost**, in SPCX |
+| `totalBurnedUsd` | what the destroyed tokens are **worth today** |
+| `burnedPctOfSupply` | share of the original mint that has been burned |
+| `burns` | how many buyback cycles have run |
+
+Cost and current value are deliberately separate fields: they answer different
+questions and drift apart as the price moves. Only burns that actually
+completed are counted — a buyback that bought but failed to burn leaves the
+tokens in existence, so it is excluded.
 
 **`totalRewarded` and `/rewards` read this bot's own ledger.** Only payouts
 carrying a real on-chain transaction hash are served, so `DRY_RUN` payouts —

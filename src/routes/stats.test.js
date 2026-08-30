@@ -140,3 +140,70 @@ test('curve market cap needs both a price and the supply — else null', () => {
   assert.strictEqual(build({}, { totalSupply: '10', decimals: null }, {}, { priceUsd: 1 }).marketCap, null);
   assert.strictEqual(build({}, SUPPLY, {}, {}).marketCap, null);
 });
+
+// ── buyback + burn ─────────────────────────────────────────────────────────
+
+test('exposes the burned total the site renders', () => {
+  const out = buildStats({
+    market: { priceUsd: 0.00002 },
+    token: {},
+    burns: { totalBurned: 12345.6, burnQuoteSpent: 2.5, burns: 3 },
+    symbol: 'SPACEINU',
+  });
+  assert.strictEqual(out.totalBurned, 12345.6);
+  assert.strictEqual(out.burns, 3);
+});
+
+test('what the burns COST is kept separate from what they are worth now', () => {
+  // burnQuoteSpent is SPCX actually spent; totalBurnedUsd is today's market
+  // value of the destroyed tokens. Conflating them would let the site claim a
+  // burn was worth more than was ever spent on it.
+  const out = buildStats({
+    market: { priceUsd: 2 },
+    token: {},
+    burns: { totalBurned: 100, burnQuoteSpent: 1.5, burns: 1 },
+    symbol: 'SPACEINU',
+  });
+  assert.strictEqual(out.burnQuoteSpent, 1.5, 'cost, in SPCX');
+  assert.strictEqual(out.totalBurnedUsd, 200, 'current value, in USD');
+});
+
+test('burn figures are null (never 0) when nothing has been burned yet', () => {
+  const out = buildStats({ market: {}, token: {}, symbol: 'SPACEINU' });
+  assert.strictEqual(out.totalBurned, null);
+  assert.strictEqual(out.totalBurnedUsd, null);
+  assert.strictEqual(out.burnedPctOfSupply, null);
+});
+
+test('a real zero burn total is preserved, not treated as missing', () => {
+  const out = buildStats({
+    market: { priceUsd: 2 },
+    token: {},
+    burns: { totalBurned: 0, burnQuoteSpent: 0, burns: 0 },
+    symbol: 'SPACEINU',
+  });
+  assert.strictEqual(out.totalBurned, 0);
+  assert.strictEqual(out.totalBurnedUsd, 0);
+});
+
+test('burned share of supply adds back what was destroyed', () => {
+  // The explorer reports CIRCULATING supply, which the burn already reduced.
+  // 900 remaining + 100 burned = 1000 originally, so 10%.
+  const out = buildStats({
+    market: {},
+    token: { totalSupply: (900n * 10n ** 18n).toString(), decimals: 18 },
+    burns: { totalBurned: 100, burnQuoteSpent: 1, burns: 1 },
+    symbol: 'SPACEINU',
+  });
+  assert.ok(Math.abs(out.burnedPctOfSupply - 10) < 1e-9);
+});
+
+test('burned share needs the supply — without it, null rather than a wrong number', () => {
+  const out = buildStats({
+    market: {},
+    token: {},
+    burns: { totalBurned: 100, burnQuoteSpent: 1, burns: 1 },
+    symbol: 'SPACEINU',
+  });
+  assert.strictEqual(out.burnedPctOfSupply, null);
+});
