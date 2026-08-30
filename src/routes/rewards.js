@@ -52,8 +52,17 @@ function toTransaction(row) {
 
 /** Pure: the cached page -> the response body, serving both shapes. */
 function presentPage(page) {
+  const transactions = page.rows.map(toTransaction);
   return {
-    transactions: page.rows.map(toTransaction),
+    // Three names for one list, because the frontends in this lineage disagree
+    // about which to read and none of them falls back to the others:
+    //   `transactions` — the space-inu RewardsScene
+    //   `items`        — the space-inu-site rewards feed, which checks
+    //                    items -> rewards -> data and would otherwise render
+    //                    an empty feed against a perfectly healthy API
+    //   `rows`         — the cursor-paging frontends (epoch-ms `at`)
+    transactions,
+    items: transactions,
     rows: page.rows,
     nextCursor: page.nextCursor,
   };

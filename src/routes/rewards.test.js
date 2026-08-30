@@ -44,6 +44,25 @@ test('a row with no timestamp presents null, not an Invalid Date', () => {
   assert.strictEqual(out.transactions[0].timestamp, null);
 });
 
-test('an empty feed presents empty lists', () => {
-  assert.deepStrictEqual(presentPage({ rows: [], nextCursor: null }), { transactions: [], rows: [], nextCursor: null });
+test('an empty feed presents empty lists under every name', () => {
+  assert.deepStrictEqual(presentPage({ rows: [], nextCursor: null }), {
+    transactions: [],
+    items: [],
+    rows: [],
+    nextCursor: null,
+  });
+});
+
+test('the payout list is served under `items` too', () => {
+  // space-inu-site's feed looks for items -> rewards -> data and does NOT fall
+  // back to `transactions`, so without this alias it renders an empty feed
+  // against a perfectly healthy API.
+  const page = presentPage({
+    rows: [{ id: '1', wallet: '0xabc', amount: 1.5, txHash: `0x${'a'.repeat(64)}`, at: 1756550400000 }],
+    nextCursor: null,
+  });
+  assert.strictEqual(page.items.length, 1);
+  assert.deepStrictEqual(page.items, page.transactions, 'both names serve the same rows');
+  assert.strictEqual(page.items[0].wallet, '0xabc');
+  assert.strictEqual(typeof page.items[0].timestamp, 'string', 'ISO-8601, not epoch ms');
 });

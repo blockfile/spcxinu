@@ -8,6 +8,7 @@ const db = require('./src/db');
 const { router: statsRouter } = require('./src/routes/stats');
 const { router: rewardsRouter } = require('./src/routes/rewards');
 const { router: tokenRouter } = require('./src/routes/token');
+const { router: distributionRouter } = require('./src/routes/distribution');
 
 const app = express();
 app.disable('x-powered-by');
@@ -33,7 +34,13 @@ app.get('/', (req, res) => {
     name: 'spaceinu-api',
     description: 'SPACEINU market cap, holder count, total SPCX rewarded and the live rewards feed for the Space Inu site',
     token: { symbol: config.tokenSymbol, address: config.tokenAddress },
-    endpoints: ['GET /token', 'GET /stats', 'GET /rewards?cursor&limit', 'GET /health'],
+    endpoints: [
+      'GET /token',
+      'GET /stats',
+      'GET /rewards?cursor&limit',
+      'GET /distribution',
+      'GET /health',
+    ],
   });
 });
 
@@ -47,6 +54,7 @@ for (const base of ['/', '/api']) {
   app.use(base, tokenRouter);
   app.use(base, statsRouter);
   app.use(base, rewardsRouter);
+  app.use(base, distributionRouter);
 }
 
 app.use((req, res) => res.status(404).json({ error: 'not found' }));

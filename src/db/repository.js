@@ -270,8 +270,32 @@ async function getBurnTotal() {
   return row || { tokensBurned: 0, quoteSpent: 0, burns: 0 };
 }
 
+/**
+ * The fee gauge the site's /distribution endpoint serves.
+ *
+ * Written by the BOT (which can see the chain and the scheduler) and read by
+ * the PUBLIC API (which can do neither). Mongo is the only thing the two
+ * processes share, and going through it is what lets the API answer "how full
+ * is the tank" without a wallet key or an RPC of its own.
+ */
+async function setDistributionState(patch) {
+  const db = getDb();
+  await db.collection('state').updateOne(
+    { _id: 'distribution' },
+    { $set: { ...patch, at: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+
+async function getDistributionState() {
+  const db = getDb();
+  return db.collection('state').findOne({ _id: 'distribution' }, { projection: { _id: 0 } });
+}
+
 module.exports = {
   createCycle,
+  setDistributionState,
+  getDistributionState,
   finishCycle,
   addStep,
   getBurnTotal,

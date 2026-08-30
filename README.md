@@ -147,8 +147,32 @@ zero as a real number.
 | --- | --- |
 | `GET /token` | name, ticker, contract address, chain |
 | `GET /stats` | `marketCap`, `holders`, `totalRewarded`, `totalRewardedUsd`, `totalBurned`, `totalBurnedUsd`, `burnedPctOfSupply`, `priceUsd`, `liquidityUsd` |
-| `GET /rewards?cursor&limit` | the payout ledger — `{ transactions: [{ wallet, amount, txHash, timestamp }] }` |
+| `GET /rewards?cursor&limit` | the payout ledger, served as `transactions`, `items` and `rows` |
+| `GET /distribution` | the fee gauge — `{ collectedUsd, thresholdUsd, status, lastDistributionId }` |
 | `GET /health` | `{ ok, uptimeSec }` |
+
+### The fee gauge
+
+`GET /distribution` is what drives the site's "how full is the tank" meter and
+its launch animation:
+
+| Field | Is |
+| --- | --- |
+| `collectedUsd` | claimable SPCX × SPCX/USD — how much has accrued |
+| `thresholdUsd` | `CLAIM_EVERY_USD`, the amount that fires a cycle |
+| `status` | `collecting`, or `distributing` while a cycle runs |
+| `lastDistributionId` / `lastDistributionAt` | move only when a cycle actually paid out |
+
+The site resets its gauge whenever the last-distribution marker changes, so
+those two fields stay **null until a payout genuinely lands** — a cycle that
+claimed nothing must not look like a distribution. For the same reason the
+timestamp is called `asOf` rather than `updatedAt`: the site would treat a field
+of the latter name as a marker and reset the animation on every poll.
+
+The numbers are produced by the **bot** (the only process that can read the
+escrow and price SPCX) and persisted to Mongo each tick; the API just reads them
+back. So the gauge is as fresh as the last poll, not as fresh as the request —
+which is the right trade, since the alternative is an RPC call per visitor.
 
 All are mounted at both `/` and `/api`, so the site works whether or not `/api`
 is in its base URL.

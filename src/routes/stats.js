@@ -122,6 +122,10 @@ function buildStats({ market, token: explorerToken, rewards = {}, burns = {}, cu
     // (`raw.<asset>Rewarded ?? raw.<asset>_rewarded ?? raw.rewarded`).
     spcxRewarded: totalRewardedUsd,
     rewarded: totalRewardedUsd,
+    // The space-inu site reads `totalDistributed` and renders it through
+    // compactCurrency with a "$" prefix, so it wants the USD figure — not the
+    // SPCX token amount that `totalRewarded` carries.
+    totalDistributed: totalRewardedUsd,
     // ── Buyback + burn ──────────────────────────────────────────────────────
     // SPACEINU tokens destroyed. The headline number for the burn tile.
     totalBurned: burns.totalBurned ?? null,

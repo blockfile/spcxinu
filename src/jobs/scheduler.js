@@ -14,6 +14,7 @@ const { getLaunch } = require('../evm/launch');
 const { escrowBalanceQuote } = require('../evm/escrow');
 const { sweepableQuote } = require('../evm/sweep');
 const { getQuotePrice } = require('../services/quoteprice');
+const repo = require('../db/repository');
 const simvault = require('../evm/simvault');
 
 const state = {
@@ -82,6 +83,20 @@ function shouldFire({ claimableQuote, priceUsd, triggerMode, claimEveryUsd }) {
   return { fire: true, reason: `threshold met ($${usd.toFixed(2)} >= $${claimEveryUsd})`, usd };
 }
 
+/**
+ * Persist the fee gauge for the public API to serve.
+ *
+ * Never allowed to break a cycle: this is display state. A Mongo hiccup while
+ * recording "the tank is 80% full" must not stop the bot from claiming.
+ */
+async function recordGauge(patch) {
+  try {
+    await repo.setDistributionState(patch);
+  } catch (err) {
+    console.warn(`[scheduler] could not record the fee gauge: ${err.message}`);
+  }
+}
+
 async function pollOnce(trigger, deps = {}) {
   if (state.paused) return { ran: false, reason: 'paused' };
   if (state.isRunning) {
@@ -121,12 +136,21 @@ async function pollOnce(trigger, deps = {}) {
     });
     state.lastClaimableUsd = gate.usd;
 
+    await recordGauge({
+      collectedQuote: claimable,
+      collectedUsd: gate.usd,
+      priceUsd,
+      thresholdUsd: deps.claimEveryUsd !== undefined ? deps.claimEveryUsd : config.claimEveryUsd,
+      status: gate.fire ? 'distributing' : 'collecting',
+    });
+
     if (!gate.fire) return { ran: false, claimable, usd: gate.usd, reason: gate.reason };
 
     console.log(`[scheduler] ${gate.reason} — running a cycle`);
     state.lastRunAt = new Date().toISOString();
     const cycle = await cycleFn();
     state.lastResult = { id: cycle.id, status: cycle.status };
+    await recordGauge(finishedGauge(cycle));
     return { ran: true, claimable, usd: gate.usd, cycle };
   } finally {
     state.isRunning = false;
@@ -156,11 +180,30 @@ function resume() {
   return getState();
 }
 
+/**
+ * Pure: the gauge after a cycle finishes. The tank is empty again, and the
+ * marker moves so the site knows a payout landed and resets its animation —
+ * but ONLY for a cycle that actually distributed. A cycle that claimed nothing
+ * must not look like a distribution.
+ */
+function finishedGauge(cycle) {
+  const paid = cycle && cycle.status === 'complete' && (cycle.quote_distributed || 0) > 0;
+  return {
+    collectedQuote: 0,
+    collectedUsd: 0,
+    status: 'collecting',
+    ...(paid
+      ? { lastDistributionId: String(cycle.id), lastDistributionAt: cycle.finished_at }
+      : {}),
+  };
+}
+
 async function triggerNow() {
   if (state.isRunning) return { skipped: true, reason: 'cycle already running' };
   state.isRunning = true;
   state.lastRunAt = new Date().toISOString();
   try {
+    await recordGauge({ status: 'distributing' });
     // DRY_RUN accrues here too, not only on a scheduler tick. A manual run is
     // how an operator rehearses the flow, and without this it always meets an
     // empty vault and reports "nothing claimed" — never reaching the airdrop or
@@ -170,6 +213,7 @@ async function triggerNow() {
 
     const cycle = await runCycle();
     state.lastResult = { id: cycle.id, status: cycle.status };
+    await recordGauge(finishedGauge(cycle));
     return cycle;
   } finally {
     state.isRunning = false;
@@ -207,4 +251,7 @@ function _resetState() {
   state.lastPhase = null;
 }
 
-module.exports = { start, pause, resume, triggerNow, pollOnce, getState, getClaimableQuote, shouldFire, _resetState };
+module.exports = {
+  start, pause, resume, triggerNow, pollOnce, getState,
+  getClaimableQuote, shouldFire, finishedGauge, _resetState,
+};
