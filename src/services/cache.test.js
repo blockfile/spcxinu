@@ -92,3 +92,40 @@ test('cachedByKey: evicts the oldest key once past max', async () => {
   assert.strictEqual(await get('a'), 4); // evicted — refetched
   assert.strictEqual(calls, 4);
 });
+
+test('a cold failure is remembered, so every caller does not re-pay for it', async () => {
+  // A dead upstream used to be rediscovered on every single request, and each
+  // rediscovery cost the full retry budget. That is how a pons endpoint
+  // answering 502 put 4-10 seconds on every /stats call.
+  let calls = 0;
+  const get = cached(60_000, async () => { calls += 1; throw new Error('upstream down'); });
+
+  await assert.rejects(get(), /upstream down/);
+  await assert.rejects(get(), /upstream down/);
+  await assert.rejects(get(), /upstream down/);
+  assert.strictEqual(calls, 1, 'the upstream was asked once, not once per caller');
+});
+
+test('the remembered failure expires, so recovery is noticed', async () => {
+  let calls = 0;
+  let broken = true;
+  const get = cached(60_000, async () => { calls += 1; if (broken) throw new Error('down'); return 'back'; }, { errorTtlMs: 5 });
+
+  await assert.rejects(get(), /down/);
+  await assert.rejects(get(), /down/);
+  assert.strictEqual(calls, 1);
+
+  await new Promise((r) => setTimeout(r, 10));
+  broken = false;
+  assert.strictEqual(await get(), 'back', 'retries once the failure window lapses');
+});
+
+test('a failure never overwrites a value that already worked', async () => {
+  let ok = true;
+  const get = cached(0, async () => { if (!ok) throw new Error('down'); return 'good'; });
+  assert.strictEqual(await get(), 'good');
+  ok = false;
+  assert.strictEqual(await get(), 'good', 'stale, but still the last good value');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(await get(), 'good', 'a failed refresh must not blank the panel');
+});

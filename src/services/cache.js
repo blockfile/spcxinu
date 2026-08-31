@@ -14,11 +14,19 @@
  * @param {() => Promise<any>} fn
  * @returns {() => Promise<any>}
  */
-function cached(ttlMs, fn) {
+function cached(ttlMs, fn, { errorTtlMs } = {}) {
   let value;
   let hasValue = false;
   let expires = 0;
   let inflight = null;
+  // How long a COLD failure is remembered. Without this, an upstream that is
+  // simply down is rediscovered on every single request, and each rediscovery
+  // costs the full retry budget - which is how a dead pons chart endpoint put
+  // 4-10 seconds on every /stats. Once a value exists this never applies; the
+  // stale one is served instead.
+  const failFor = errorTtlMs == null ? Math.min(ttlMs, 30_000) : errorTtlMs;
+  let lastError = null;
+  let errorUntil = 0;
 
   const refresh = () => {
     if (inflight) return inflight;
@@ -35,6 +43,8 @@ function cached(ttlMs, fn) {
           expires = 0;
           return value;
         }
+        lastError = err;
+        errorUntil = Date.now() + failFor;
         throw err;
       } finally {
         inflight = null;
@@ -54,6 +64,10 @@ function cached(ttlMs, fn) {
       refresh().catch(() => {}); // errors already fall back to the stale value
       return value;
     }
+
+    // Cold and recently failed: fail immediately rather than making this
+    // caller pay to confirm what the last one already found out.
+    if (lastError && Date.now() < errorUntil) throw lastError;
 
     // Cold: nothing to serve but the upstream itself.
     return refresh();

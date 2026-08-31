@@ -25,6 +25,7 @@ const config = require('./../config');
 const { fetchJson } = require('./fetchJson');
 const { cached } = require('./cache');
 const { getQuotePrice } = require('./quoteprice');
+const { getMarketData } = require('./marketdata');
 
 const EMPTY = { priceUsd: null };
 
@@ -58,9 +59,25 @@ function combinePrices(curvePrice, quoteUsd) {
 async function fetchCurveMarket() {
   if (!config.tokenAddress || !config.rewardTokenAddress) return EMPTY;
 
+  // The curve price exists to cover the window BEFORE a token graduates. Once
+  // it trades on a real pool DexScreener prices it, this value is never read
+  // (it is the third fallback behind two better sources), and pons answers 502
+  // for the chart of a graduated token. Paying four retries to rediscover that
+  // on every request is what put 4-10 seconds on /stats.
+  //
+  // Read from the shared cache, so this costs nothing. If DexScreener itself is
+  // down we fall through and ask pons after all - which is exactly the outage
+  // the curve fallback is for.
+  const market = await getMarketData().catch(() => ({}));
+  if (typeof market.priceUsd === 'number' && market.priceUsd > 0) return EMPTY;
+
   const chartUrl = `${config.ponsApi}/api/pons-v2-market/${config.tokenAddress}/chart?range=1d`;
   const [chart, quote] = await Promise.all([
-    fetchJson(chartUrl, { headers: { accept: 'application/json' } }),
+    // One retry, not three. This is the pre-graduation price only - a nice
+    // extra before a token bonds and dead weight afterwards, when the pons
+    // endpoint starts answering 502 for it. It must never be the reason
+    // /stats is slow.
+    fetchJson(chartUrl, { headers: { accept: 'application/json' }, retries: 1, delayMs: 250 }),
     getQuotePrice(), // shared cached SPCX/USD read (see quoteprice.js)
   ]);
 
