@@ -97,6 +97,22 @@ async function sweepBlockedByOperator(launch, hook = null) {
 async function sweepableRaw(launch, hook = null) {
   if (config.dryRun) return 0n; // the sim vault models the escrow directly
   if (await sweepBlockedByOperator(launch, hook)) return 0n;
+  return pendingCreditRaw(launch, hook);
+}
+
+/**
+ * Everything the pool has accrued to US, whether or not we may sweep it today.
+ *
+ * The same arithmetic as sweepableRaw without the operator gate, because the
+ * two answer different questions. The TRIGGER must ask "what can I claim right
+ * now", or it fires on money it cannot reach. The site's fee gauge must ask
+ * "how much has built up", or it reads $0 for hours while fees accrue behind
+ * the lock and then jumps - which looks to a holder like a dead flywheel.
+ *
+ * Both are true. Only the second belongs on a progress bar.
+ */
+async function pendingCreditRaw(launch, hook = null) {
+  if (config.dryRun) return 0n;
 
   if (!launch.graduated) {
     const c = curveAt(launch.curve);
@@ -129,6 +145,11 @@ async function sweepableRaw(launch, hook = null) {
  */
 async function sweepableQuote(launch) {
   return Number(formatUnits(await sweepableRaw(launch), config.rewardDecimals));
+}
+
+/** What has accrued to us, reachable or not — the number the gauge shows. */
+async function pendingCreditQuote(launch) {
+  return Number(formatUnits(await pendingCreditRaw(launch), config.rewardDecimals));
 }
 
 /**
@@ -192,4 +213,5 @@ async function sweepFees(launch) {
 module.exports = {
   creatorShareRaw, isOperatorOnlyError, sweepableRaw, sweepableQuote,
   sweepFees, sweepBlockedByOperator,
+  pendingCreditRaw, pendingCreditQuote,
 };

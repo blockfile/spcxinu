@@ -216,3 +216,41 @@ test('a live trigger does NOT accrue — the escrow fills from real fees', async
     delete require.cache[require.resolve(m)];
   }
 });
+
+test('the gauge shows what has accrued, while the gate still uses what is claimable', async () => {
+  // Post-graduation nearly everything sits behind pons's operator lock, so a
+  // claimable-based gauge sat at $0 for hours and then jumped. To a holder that
+  // reads as a dead flywheel. The two numbers answer different questions: the
+  // gate must never fire on money it cannot reach, the gauge must show the
+  // money building up.
+  const { pollOnce, _resetState } = require('./scheduler');
+  _resetState();
+
+  const recorded = [];
+  const repo = require('../db/repository');
+  const realSet = repo.setDistributionState;
+  repo.setDistributionState = async (patch) => { recorded.push(patch); };
+
+  try {
+    const res = await pollOnce('test', {
+      dryRun: false,
+      tokenAddress: '0xtoken',
+      getLaunch: async () => ({ graduated: true, poolId: '0xpool', token: '0xtoken' }),
+      escrowBalanceQuote: async () => 0,        // nothing claimable
+      sweepableQuote: async () => 0,            // locked by the operator
+      pendingCreditQuote: async () => 0.340607, // but this much HAS accrued
+      getQuotePrice: async () => ({ priceUsd: 141.42 }),
+      triggerMode: 'accumulation',
+      claimEveryUsd: 100,
+      runCycle: async () => { throw new Error('must not fire on unreachable money'); },
+    });
+
+    assert.strictEqual(res.ran, false, 'the gate must NOT fire: nothing is claimable');
+    const gauge = recorded[recorded.length - 1];
+    assert.ok(gauge.collectedQuote > 0.34, `the gauge must show the accrual, got ${gauge.collectedQuote}`);
+    assert.ok(gauge.collectedUsd > 47, `and price it, got ${gauge.collectedUsd}`);
+  } finally {
+    repo.setDistributionState = realSet;
+    _resetState();
+  }
+});

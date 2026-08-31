@@ -12,7 +12,7 @@ const config = require('../config');
 const { runCycle, recordFeeRecipientCheck } = require('./cycle');
 const { getLaunch } = require('../evm/launch');
 const { escrowBalanceQuote } = require('../evm/escrow');
-const { sweepableQuote } = require('../evm/sweep');
+const { sweepableQuote, pendingCreditQuote } = require('../evm/sweep');
 const { getQuotePrice } = require('../services/quoteprice');
 const repo = require('../db/repository');
 const simvault = require('../evm/simvault');
@@ -26,6 +26,7 @@ const state = {
   lastClaimable: null,
   lastPriceUsd: null,
   lastClaimableUsd: null,
+  lastAccrued: null,
   startedAt: null,
   lastPhase: null,
 };
@@ -45,15 +46,28 @@ async function getClaimableQuote(deps = {}) {
   const readLaunch = deps.getLaunch || getLaunch;
   const token = deps.tokenAddress !== undefined ? deps.tokenAddress : config.tokenAddress;
 
-  if (dryRun) return readEscrow();
-  if (!token) return 0;
+  if (dryRun) {
+    const v = await readEscrow();
+    state.lastAccrued = v;
+    return v;
+  }
+  if (!token) {
+    state.lastAccrued = 0;
+    return 0;
+  }
   const launch = await readLaunch();
   state.lastPhase = launch.graduated ? 'v4' : 'curve';
   // Free: the launch record is already in hand, so the fee-recipient verdict
   // stays as fresh as the poll rather than as stale as the last cycle.
   const warning = recordFeeRecipientCheck(launch, config.wallet.address);
   if (warning) console.warn(`[scheduler] ⚠️  ${warning}`);
-  const [inEscrow, pending] = await Promise.all([readEscrow(), readSweepable(launch)]);
+  const readAccrued = deps.pendingCreditQuote || pendingCreditQuote;
+  const [inEscrow, pending, accrued] = await Promise.all([
+    readEscrow(),
+    readSweepable(launch),
+    readAccrued(launch).catch(() => null),
+  ]);
+  state.lastAccrued = accrued === null ? null : inEscrow + accrued;
   return inEscrow + pending;
 }
 
@@ -140,9 +154,15 @@ async function pollOnce(trigger, deps = {}) {
     });
     state.lastClaimableUsd = gate.usd;
 
+    // The gauge shows what has ACCRUED, not what is claimable this instant.
+    // Post-graduation almost everything sits behind pons's operator lock, so a
+    // claimable-based gauge reads $0 for hours and then jumps - which looks to
+    // a holder like nothing is happening. The GATE still uses claimable, so the
+    // bot never fires on money it cannot reach.
+    const accrued = state.lastAccrued === null ? claimable : Math.max(claimable, state.lastAccrued);
     await recordGauge({
-      collectedQuote: claimable,
-      collectedUsd: gate.usd,
+      collectedQuote: accrued,
+      collectedUsd: typeof priceUsd === 'number' && priceUsd > 0 ? accrued * priceUsd : gate.usd,
       priceUsd,
       thresholdUsd: deps.claimEveryUsd !== undefined ? deps.claimEveryUsd : config.claimEveryUsd,
       status: gate.fire ? 'distributing' : 'collecting',
@@ -236,6 +256,7 @@ function getState() {
     lastClaimable: state.lastClaimable,
     lastPriceUsd: state.lastPriceUsd,
     lastClaimableUsd: state.lastClaimableUsd,
+    lastAccrued: state.lastAccrued,
     phase: state.lastPhase,
     startedAt: state.startedAt,
   };
@@ -251,6 +272,7 @@ function _resetState() {
   state.lastClaimable = null;
   state.lastPriceUsd = null;
   state.lastClaimableUsd = null;
+  state.lastAccrued = null;
   state.startedAt = null;
   state.lastPhase = null;
 }
