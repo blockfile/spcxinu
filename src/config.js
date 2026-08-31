@@ -113,6 +113,11 @@ const config = {
   tokenAddress: lowerOrNull(process.env.TOKEN_ADDRESS),
   // The site's ticker is $SPACEINU (SITE.ticker in its config/site.js).
   tokenSymbol: process.env.TOKEN_SYMBOL || 'SPACEINU',
+  // Referenced in several places as `config.rewardSymbol || 'SPCX'` but never
+  // actually defined, so every one of those fell through to the literal. Only
+  // the burns feed, which had no fallback, exposed it - as a null where the
+  // site expects a ticker.
+  rewardSymbol: process.env.REWARD_SYMBOL || 'SPCX',
   tokenName: process.env.TOKEN_NAME || 'Space Inu',
   // Whole-token total supply, used ONLY to compute the pre-graduation market
   // cap when Blockscout (the normal source of supply + decimals) is

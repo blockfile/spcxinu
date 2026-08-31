@@ -50,3 +50,14 @@ test('mapping a page keeps every row intact', () => {
     assert.ok(r.amount > 0);
   }
 });
+
+test('a burn row names both tickers', () => {
+  // quoteSymbol came back null on the live feed: config.rewardSymbol was
+  // referenced in four places but never defined, and everywhere else hid it
+  // behind a `|| 'SPCX'` fallback.
+  const config = require('../config');
+  assert.strictEqual(config.rewardSymbol, 'SPCX');
+  const row = toRow({ id: 1, signature: '0x' + 'a'.repeat(64), detail: { tokensBought: 5, quoteSpent: 1 } });
+  assert.strictEqual(row.symbol, 'SPACEINU', 'what was destroyed');
+  assert.strictEqual(row.quoteSymbol, 'SPCX', 'what paid for it');
+});
