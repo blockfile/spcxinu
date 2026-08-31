@@ -243,6 +243,39 @@ async function getDistributedTotal(rewardToken) {
  *
  * @returns {Promise<{tokensBurned:number, quoteSpent:number, burns:number}>}
  */
+/**
+ * One page of BURN events, newest first.
+ *
+ * Same source as getBurnTotal - a completed buyback step carrying a real
+ * transaction hash - but as individual events rather than a sum, so the site
+ * can show "874,649 SPACEINU destroyed" beside a link to the burn itself. The
+ * totals alone could tell a visitor how much had been burned but never when,
+ * or let them verify any of it.
+ */
+async function getBurnPage(limit, afterId = null) {
+  const db = getDb();
+  const filter = {
+    name: 'buyback',
+    status: 'ok',
+    'detail.burned': true,
+    signature: { $regex: REAL_TX_HASH },
+  };
+  if (afterId !== null && afterId !== undefined && afterId !== '') {
+    filter.id = { $lt: Number(afterId) };
+  }
+  const found = await db
+    .collection('steps')
+    .find(filter, NO_ID)
+    .sort({ id: -1 })
+    .limit(limit + 1)
+    .toArray();
+
+  const rows = found.slice(0, limit);
+  const more = found.length > limit;
+  const last = rows[rows.length - 1];
+  return { rows, nextCursor: more && last ? String(last.id) : null };
+}
+
 async function getBurnTotal() {
   const db = getDb();
   const [row] = await db
@@ -328,6 +361,7 @@ module.exports = {
   finishCycle,
   addStep,
   getBurnTotal,
+  getBurnPage,
   getCycleWithSteps,
   getCycles,
   getLastCycle,

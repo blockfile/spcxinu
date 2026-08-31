@@ -7,6 +7,7 @@ const config = require('./src/config');
 const db = require('./src/db');
 const { router: statsRouter } = require('./src/routes/stats');
 const { router: rewardsRouter } = require('./src/routes/rewards');
+const { router: burnsRouter } = require('./src/routes/burns');
 const { router: tokenRouter } = require('./src/routes/token');
 const { router: distributionRouter } = require('./src/routes/distribution');
 
@@ -50,6 +51,7 @@ app.get('/', (req, res) => {
       'GET /token',
       'GET /stats',
       'GET /rewards?cursor&limit',
+      'GET /burns?cursor&limit',
       'GET /distribution',
       'GET /health',
     ],
@@ -66,6 +68,7 @@ for (const base of ['/', '/api']) {
   app.use(base, tokenRouter);
   app.use(base, statsRouter);
   app.use(base, rewardsRouter);
+  app.use(base, burnsRouter);
   app.use(base, distributionRouter);
 }
 
