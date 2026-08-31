@@ -50,7 +50,16 @@ async function fetchAllHolders(token) {
     // blip doesn't fail the whole cycle after the claim has already happened.
     let data;
     try {
-      data = await fetchJson(url, { headers: { accept: 'application/json' } });
+      // A generous timeout, deliberately. The default is tuned for a browser
+      // waiting on /stats, where slow means broken; this is the bot paging
+      // through every holder of the token, one page at a time, and it is
+      // ALLOWED to be slow. A 6s default aborted this mid-cycle and failed the
+      // whole run AFTER the escrow had been claimed and the gas leg swapped -
+      // the most expensive moment to fail.
+      data = await fetchJson(url, {
+        headers: { accept: 'application/json' },
+        timeoutMs: config.holdersFetchTimeoutMs,
+      });
     } catch (err) {
       throw new Error(`holders fetch failed (${err.status || err.message}) for ${token}`);
     }

@@ -47,3 +47,20 @@ test('buildExcludeSet includes wallet, dead, pool manager, reward token', async 
   assert.ok(set.has(config.poolManager.toLowerCase()));
   assert.ok(set.has(config.rewardTokenAddress.toLowerCase()));
 });
+
+test('the holder enumeration is given far longer than a browser-facing read', async () => {
+  // A 6s default - right for /stats, where slow means broken - aborted the
+  // holder paging mid-cycle and failed the run AFTER the escrow was claimed and
+  // the gas leg swapped, stranding the holders' share in the wallet. Paging
+  // every holder is allowed to be slow.
+  const config = require('../config');
+  assert.ok(
+    config.holdersFetchTimeoutMs >= 30_000,
+    `holder paging needs room to breathe, got ${config.holdersFetchTimeoutMs}ms`
+  );
+  const { TIMEOUT_MS } = require('../services/fetchJson');
+  assert.ok(
+    config.holdersFetchTimeoutMs > TIMEOUT_MS,
+    'it must not inherit the browser-facing default'
+  );
+});

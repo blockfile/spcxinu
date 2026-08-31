@@ -128,6 +128,9 @@ const config = {
   // every 30s per browser tab, so without this the upstreams would see one
   // request per visitor per 30s.
   marketTtlMs: num(process.env.MARKET_TTL_MS, 30_000),
+  // The bot pages through every holder; that is inherently slower than any
+  // single API read and must not inherit a browser-facing timeout.
+  holdersFetchTimeoutMs: num(process.env.HOLDERS_FETCH_TIMEOUT_MS, 45_000),
   holdersTtlMs: num(process.env.HOLDERS_TTL_MS, 120_000),
 
   // ── Pons rewards ("Total SPCX Rewarded") ───────────────────────────────────
