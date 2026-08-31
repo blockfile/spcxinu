@@ -12,11 +12,18 @@ test('serves from cache within the TTL', async () => {
   assert.strictEqual(calls, 1);
 });
 
-test('refetches once the TTL has expired', async () => {
+test('a stale read is served immediately and refreshed behind the caller', async () => {
+  // The refresh must not block the reader. Waiting for it is what made /stats
+  // hang: the cache went cold every TTL, and whoever arrived in that window
+  // paid the upstream's full latency, retries included, while a perfectly good
+  // value sat in memory. Staleness is cheap here; a hung request is not.
   let calls = 0;
   const get = cached(0, async () => ++calls);
-  assert.strictEqual(await get(), 1);
-  assert.strictEqual(await get(), 2);
+
+  assert.strictEqual(await get(), 1, 'cold: nothing to serve but the upstream');
+  assert.strictEqual(await get(), 1, 'stale: the old value, not a wait for the new one');
+  await new Promise((r) => setTimeout(r, 0)); // let the background refresh land
+  assert.strictEqual(await get(), 2, 'the refresh did happen');
 });
 
 test('concurrent callers share one in-flight request', async () => {

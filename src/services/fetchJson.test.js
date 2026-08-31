@@ -75,3 +75,28 @@ test('does not retry a non-retryable status (404, or a Cloudflare 403 challenge)
     assert.strictEqual(calls, 1);
   }
 });
+
+test('a hung upstream is abandoned rather than waited on forever', async () => {
+  // Node's fetch has no default timeout, so a socket that opens and goes quiet
+  // hangs until the OS gives up. With retries that stacked into four unbounded
+  // waits and /stats sat there until the browser timed out.
+  let signals = [];
+  const hung = (_url, opts) => {
+    signals.push(opts.signal);
+    return new Promise((_res, rej) => {
+      opts.signal.addEventListener('abort', () => rej(opts.signal.reason));
+    });
+  };
+  await assert.rejects(
+    fetchJson('https://example.test/x', { fetchFn: hung, retries: 1, delayMs: 0, timeoutMs: 20 })
+  );
+  assert.strictEqual(signals.length, 2, 'timed out, then retried once');
+  assert.ok(signals.every((s) => s && typeof s.aborted === 'boolean'), 'every attempt carried a timeout signal');
+});
+
+test('a timeout can be switched off for callers that manage their own', async () => {
+  const seen = [];
+  const ok = (_url, opts) => { seen.push(opts.signal); return { ok: true, json: async () => ({ fine: true }) }; };
+  assert.deepStrictEqual(await fetchJson('https://example.test/x', { fetchFn: ok, timeoutMs: 0 }), { fine: true });
+  assert.strictEqual(seen[0], undefined, 'no signal attached when disabled');
+});

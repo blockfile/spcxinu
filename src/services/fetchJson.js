@@ -19,6 +19,12 @@
 const pkg = require('../../package.json');
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+
+// Node's fetch has NO default timeout, so a socket that opens and then goes
+// quiet hangs until the OS gives up - minutes, not seconds. With retries on top
+// that stacked into four unbounded waits, and /stats sat there until the
+// browser gave up. A slow upstream has to look like a failed one.
+const TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS) || 6000;
 const USER_AGENT =
   process.env.USER_AGENT ||
   `Mozilla/5.0 (compatible; ${pkg.name}/${pkg.version}${pkg.homepage ? `; +${pkg.homepage}` : ''})`;
@@ -28,15 +34,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * GET `url` and parse JSON, retrying transient failures.
  * @param {string} url
  * @param {{headers?: object, method?: string, body?: string, retries?: number, delayMs?: number,
- *          sleepFn?: (ms:number)=>Promise<void>, fetchFn?: typeof fetch}} [opts]
+ *          sleepFn?: (ms:number)=>Promise<void>, fetchFn?: typeof fetch,
+ *          timeoutMs?: number}} [opts]
  */
-async function fetchJson(url, { headers, method, body, retries = 3, delayMs = 1000, sleepFn = sleep, fetchFn = fetch } = {}) {
+async function fetchJson(url, { headers, method, body, retries = 3, delayMs = 1000, sleepFn = sleep, fetchFn = fetch, timeoutMs = TIMEOUT_MS } = {}) {
   const allHeaders = { 'user-agent': USER_AGENT, ...headers };
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let res;
     try {
-      res = await fetchFn(url, { headers: allHeaders, method, body });
+      // A timeout aborts into the catch below, so it retries like any other
+      // network error rather than failing the whole call outright.
+      res = await fetchFn(url, {
+        headers: allHeaders,
+        method,
+        body,
+        ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
     } catch (err) {
       lastErr = err; // network / DNS / socket error — retryable
       if (attempt === retries) throw err;
@@ -55,4 +69,4 @@ async function fetchJson(url, { headers, method, body, retries = 3, delayMs = 10
   throw lastErr; // unreachable (loop returns or throws), kept for clarity
 }
 
-module.exports = { fetchJson, RETRYABLE_STATUS, USER_AGENT };
+module.exports = { fetchJson, RETRYABLE_STATUS, USER_AGENT, TIMEOUT_MS };

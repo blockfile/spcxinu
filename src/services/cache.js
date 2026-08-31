@@ -20,10 +20,8 @@ function cached(ttlMs, fn) {
   let expires = 0;
   let inflight = null;
 
-  return async () => {
-    if (hasValue && Date.now() < expires) return value;
+  const refresh = () => {
     if (inflight) return inflight;
-
     inflight = (async () => {
       try {
         value = await fn();
@@ -42,8 +40,23 @@ function cached(ttlMs, fn) {
         inflight = null;
       }
     })();
-
     return inflight;
+  };
+
+  return async () => {
+    if (hasValue && Date.now() < expires) return value;
+
+    // Stale, but we HAVE a value: hand it over now and refresh behind the
+    // request. Waiting for the upstream here is what made /stats hang - the
+    // cache went cold every TTL and every visitor who arrived in that window
+    // paid the full upstream latency, retries included.
+    if (hasValue) {
+      refresh().catch(() => {}); // errors already fall back to the stale value
+      return value;
+    }
+
+    // Cold: nothing to serve but the upstream itself.
+    return refresh();
   };
 }
 
